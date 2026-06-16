@@ -1,3 +1,5 @@
+[![tests](https://github.com/janelia-cellmap/proofreader-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/janelia-cellmap/proofreader-mcp/actions/workflows/tests.yml)
+
 # proofreader-mcp
 
 An [MCP](https://modelcontextprotocol.io) server for **image-centric proofreading of

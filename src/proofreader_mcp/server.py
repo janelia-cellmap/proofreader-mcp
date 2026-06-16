@@ -7,6 +7,7 @@ human reviews. All domain logic lives in the sibling modules.
 
 from __future__ import annotations
 
+import json
 import mimetypes
 from typing import Any
 
@@ -31,13 +32,12 @@ store = Store()
 # Resources
 # --------------------------------------------------------------------------
 
+
 @mcp.resource("collection://{collection_id}")
 def collection_resource(collection_id: str) -> str:
     """The object index + organelle_type + validity rubric for a collection."""
     col = store.get(collection_id)
     listing = store.list_objects(collection_id, page=0, page_size=10_000)
-    import json
-
     return json.dumps(
         {
             "collection_id": col.collection_id,
@@ -63,6 +63,7 @@ def object_image_resource(collection_id: str, object_id: str) -> Image:
 # --------------------------------------------------------------------------
 # Tools
 # --------------------------------------------------------------------------
+
 
 @mcp.tool()
 def load_collection(path: str) -> dict[str, Any]:
@@ -143,9 +144,7 @@ def classify_object(
 
 
 @mcp.tool()
-def rank_objects(
-    collection_id: str, by: str = "expected_cost"
-) -> dict[str, Any]:
+def rank_objects(collection_id: str, by: str = "expected_cost") -> dict[str, Any]:
     """Order all recorded verdicts by expected error cost (confidence × severity).
 
     ``by`` is ``"expected_cost"`` (default) or ``"confidence"``.

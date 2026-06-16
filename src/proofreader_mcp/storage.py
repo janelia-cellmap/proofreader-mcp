@@ -125,8 +125,7 @@ class Store:
                 rec = ObjectRecord.from_dict(
                     {
                         "object_id": entry["object_id"],
-                        "image": entry.get("image")
-                        or f"{entry['object_id']}.png",
+                        "image": entry.get("image") or f"{entry['object_id']}.png",
                         "meta": entry.get("meta") or {},
                     }
                 )
@@ -144,7 +143,9 @@ class Store:
         # Validation: declared-but-absent images, and on-disk pngs not declared.
         declared_images = {rec.image for rec in objects.values()}
         missing_images = sorted(
-            rec.image for rec in objects.values() if not (directory / rec.image).exists()
+            rec.image
+            for rec in objects.values()
+            if not (directory / rec.image).exists()
         )
         on_disk = {p.name for p in directory.glob("*.png")}
         orphan_files = sorted(on_disk - declared_images)

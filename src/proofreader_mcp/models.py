@@ -55,7 +55,7 @@ class ObjectRecord:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ObjectRecord":
+    def from_dict(cls, d: dict[str, Any]) -> ObjectRecord:
         return cls(
             object_id=str(d["object_id"]),
             image=str(d["image"]),
@@ -89,7 +89,7 @@ class Verdict:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Verdict":
+    def from_dict(cls, d: dict[str, Any]) -> Verdict:
         return cls(
             object_id=str(d["object_id"]),
             primary_label=_coerce_enum(PrimaryLabel, d["primary_label"]),
@@ -120,7 +120,7 @@ class Review:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Review":
+    def from_dict(cls, d: dict[str, Any]) -> Review:
         return cls(
             object_id=str(d["object_id"]),
             verdict=_coerce_enum(ReviewVerdict, d["verdict"]),
