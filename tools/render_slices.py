@@ -2,17 +2,20 @@
 """Render raw-EM + segmentation 2D cross-section montages for proofreading.
 
 Second-pass companion to ``render_meshes.py``. For each object it reads the raw
-EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived
-centroid and renders the three orthogonal center sections (perpendicular to X, Y,
-Z), each with the mesh viewed straight down the same axis above it so they line up:
+EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived centroid
+and renders, per axis column (X/Y/Z), a depth-colored mesh view plus N sections
+stepping through the object along that axis:
 
-    [ mesh down X ] [ mesh down Y ] [ mesh down Z ]
-    [  X section  ] [  Y section  ] [  Z section  ]
+    [ mesh down X ] [ mesh down Y ] [ mesh down Z ]   <- colored by depth
+    [   X slice 1 ] [   Y slice 1 ] [   Z slice 1 ]   <- blue border (near)
+       ...              ...              ...          <- center row labeled
+    [   X slice N ] [   Y slice N ] [   Z slice N ]   <- red border (far)
 
-Each column is one axis (border-colored X red / Y green / Z blue). The crop is a
-cube (same nm field of view in every axis), so all panels -- sections and mesh
-views -- share ONE nm/pixel scale; an object therefore looks smaller in the view
-down its long axis and larger in the others, instead of being stretched to fill.
+The mesh in each column is viewed straight down that axis and colored by position
+ALONG the axis (blue near -> red far); every slice row's border uses the same
+color map, so a blue-bordered slice corresponds to the blue part of the mesh, etc.
+The crop is a cube (same nm field of view in every axis), so all panels share ONE
+nm/pixel scale (an object looks smaller down its long axis, larger in the others).
 Sections are raw EM (grayscale, fixed contrast window) with the object's
 segmentation overlaid as a light translucent tint.
 
@@ -33,6 +36,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import colorsys
 import json
 from pathlib import Path
 
@@ -61,6 +65,18 @@ OVERLAY_ALPHA = 0.10  # very light tint so the EM underneath stays clearly reada
 MESH_OPACITY = 1.0
 SEP = 6
 SEP_COLOR = (30, 30, 30)
+SPAN_FRAC = 0.45  # slices span centroid +/- SPAN_FRAC * extent along the axis
+
+
+def _depth_color(t: float) -> tuple[int, int, int]:
+    """Map normalized depth t in [0, 1] to an RGB color (blue near -> red far)."""
+    t = min(max(t, 0.0), 1.0)
+    r, g, b = colorsys.hsv_to_rgb(0.66 * (1.0 - t), 0.85, 0.95)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+# 256-entry lookup table for fast per-vertex depth coloring of the mesh.
+_DEPTH_LUT = np.array([_depth_color(i / 255) for i in range(256)], dtype=np.uint8)
 
 
 def open_level0(group_path: Path):
@@ -121,16 +137,16 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
     return img
 
 
-def _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi):
-    """Center section perpendicular to `axis` (z,y,x index): raw + light overlay.
+def _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi):
+    """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
 
     flipud puts the higher world coordinate at the top so the section's orientation
     matches the axis-aligned mesh view above it.
     """
-    raw2d = np.flipud(np.take(raw_crop, raw_crop.shape[axis] // 2, axis=axis))
-    seg2d = np.flipud(np.take(seg_crop, seg_crop.shape[axis] // 2, axis=axis)) == int(
-        obj_id
-    )
+    ri = min(max(ri, 0), raw_crop.shape[axis] - 1)
+    si = min(max(si, 0), seg_crop.shape[axis] - 1)
+    raw2d = np.flipud(np.take(raw_crop, ri, axis=axis))
+    seg2d = np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id)
     base = Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     mask = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
         (cell, cell), Image.NEAREST
@@ -139,18 +155,28 @@ def _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi):
 
 
 def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, parallel_scale):
-    """Solid mesh viewed straight down `axis`, oriented to line up with its section.
+    """Mesh viewed straight down `axis`, colored by depth ALONG that axis.
 
-    ``parallel_scale`` is shared across all three axes (= half the cubic field of
-    view) so the mesh views and the sections all share one nm/pixel scale.
+    Surface color encodes position along the viewing/slicing axis (blue near ->
+    red far) using the same map as the slice borders, so each colored slice maps to
+    the matching-colored part of the mesh. ``parallel_scale`` is shared across all
+    three axes (= half the cubic field of view) for one nm/pixel scale everywhere.
     """
     direction, up = MESH_VIEW[axis_zyx]
+    ax = 2 - axis_zyx  # x,y,z index of the depth axis
+    depth = np.asarray(mesh.points)[:, ax]
+    span = extent_xyz[ax] * 2 * SPAN_FRAC
+    t = np.clip(
+        (depth - (center_xyz[ax] - extent_xyz[ax] * SPAN_FRAC)) / (span + 1e-9), 0, 1
+    )
+    colors = _DEPTH_LUT[(t * 255).astype(np.int64)]
+
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
     pl.set_background("white")
-    # Match the mesh-montage look: lightgray, smooth shading, a little specular.
     pl.add_mesh(
         mesh,
-        color="lightgray",
+        scalars=colors,
+        rgb=True,
         opacity=MESH_OPACITY,
         smooth_shading=True,
         specular=0.3,
@@ -179,6 +205,7 @@ def render_object(
     margin,
     lo,
     hi,
+    n_slices,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -201,36 +228,59 @@ def render_object(
 
     font = _font(max(14, cell // 22))
     have_mesh = mesh is not None
-    rows = 2 if have_mesh else 1
+    center_row = n_slices // 2
+    fracs = np.linspace(-SPAN_FRAC, SPAN_FRAC, n_slices)
+    # Each slice row gets a depth color (matches the mesh's depth coloring).
+    slice_colors = [_depth_color(i / (n_slices - 1)) for i in range(n_slices)]
+
+    nrow = n_slices + (1 if have_mesh else 0)
     border = max(3, cell // 90)
     canvas = Image.new(
         "RGB",
-        (3 * cell + 4 * SEP, rows * cell + (rows + 1) * SEP),
+        (3 * cell + 4 * SEP, nrow * cell + (nrow + 1) * SEP),
         SEP_COLOR,
     )
 
     for col, (label, axis, color) in enumerate(PLANES):
         x = SEP + col * (cell + SEP)
-        # Label with this axis's object extent in nm for an absolute sense of scale
-        # (all panels share one nm/pixel, so these are directly comparable).
-        ext_nm = extent_xyz[2 - axis]
-        text = f"{label}  {ext_nm:.0f} nm"
+        ax = 2 - axis  # x,y,z depth-axis index for this column
+        ext_nm = extent_xyz[ax]
+        row = 0
         if have_mesh:
             mv = _bordered(
                 _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, fov_half),
                 color,
                 border,
             )
-            ImageDraw.Draw(mv).text((8, 6), text, fill=color, font=font)
+            ImageDraw.Draw(mv).text(
+                (8, 6),
+                f"{label.lower()}_extent = {ext_nm:.0f} nm",
+                fill=color,
+                font=font,
+            )
             canvas.paste(mv, (x, SEP))
-        sec = _bordered(
-            _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi),
-            color,
-            border,
-        )
-        if not have_mesh:
-            ImageDraw.Draw(sec).text((8, 6), text, fill=color, font=font)
-        canvas.paste(sec, (x, SEP + (rows - 1) * (cell + SEP)))
+            row = 1
+
+        for i, frac in enumerate(fracs):
+            pos = center_xyz[ax] + ext_nm * frac
+            ri = int(round((pos - rtrans[axis]) / rscale[axis])) - rb[axis][0]
+            si = int(round((pos - strans[axis]) / sscale[axis])) - sb[axis][0]
+            sec = _bordered(
+                _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi),
+                slice_colors[i],
+                border,
+            )
+            d = ImageDraw.Draw(sec)
+            if i == center_row:
+                d.text((8, 6), "center", fill=(0, 0, 0), font=font)
+            if not have_mesh and i == 0:
+                d.text(
+                    (8, 6),
+                    f"{label.lower()}_extent = {ext_nm:.0f} nm",
+                    fill=color,
+                    font=font,
+                )
+            canvas.paste(sec, (x, SEP + (row + i) * (cell + SEP)))
     return canvas
 
 
@@ -272,6 +322,9 @@ def main(argv: list[str] | None = None) -> int:
         "(comma-separated), highest-confidence first",
     )
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument(
+        "--slices", type=int, default=5, help="number of sections stepping through"
+    )
     p.add_argument("--cell-size", type=int, default=420, help="pixels per panel")
     p.add_argument("--margin", type=float, default=1.5, help="crop padding factor")
     p.add_argument(
@@ -335,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.margin,
                 lo,
                 hi,
+                args.slices,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")

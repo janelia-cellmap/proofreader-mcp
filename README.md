@@ -175,21 +175,25 @@ It is intentionally not part of the core MCP install.
 Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
 apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
 (behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
-each object's mesh-derived centroid and renders three orthogonal center sections, each with
-the mesh viewed straight down the same axis above it so they line up:
+each object's mesh-derived centroid and renders, per axis column (X/Y/Z), a depth-colored
+mesh view plus `--slices` N sections stepping through the object along that axis:
 
 ```
-[ mesh down X ] [ mesh down Y ] [ mesh down Z ]
-[  X section  ] [  Y section  ] [  Z section  ]
+[ mesh down X ] [ mesh down Y ] [ mesh down Z ]   <- colored by depth along the axis
+[   X slice 1 ] [   Y slice 1 ] [   Z slice 1 ]   <- blue border (near)
+      ...             ...             ...          <- middle row labeled "center"
+[   X slice N ] [   Y slice N ] [   Z slice N ]   <- red border (far)
 ```
 
-Each column is one axis (border-colored X red / Y green / Z blue). The crop is a **cube**
-(same nm field of view in every axis), so all panels share **one nm/pixel scale** — an
-object looks smaller in the view down its long axis and larger in the others, rather than
-being stretched to fill each panel. Sections are raw EM in grayscale with a **fixed contrast
-window** (`--contrast lo,hi`, default `84,152` for this dataset) and the object's
-segmentation overlaid as a **light** translucent tint. The mesh row is shown only when
-`--mesh-source` is given (otherwise it's a single row of sections).
+The mesh in each column is viewed straight down that axis and **colored by position along
+the axis** (blue near → red far); every slice's border uses the same color map, so a
+blue-bordered slice corresponds to the blue part of the mesh. The crop is a **cube** (same nm
+field of view in every axis), so all panels share **one nm/pixel scale** — an object looks
+smaller down its long axis and larger in the others. Each mesh panel is labeled
+`{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast window**
+(`--contrast lo,hi`, default `84,152` for this dataset) and the object's segmentation
+overlaid as a **light** translucent tint. The mesh row is shown only when `--mesh-source` is
+given.
 
 Intended to run **staged** — classify meshes over everything first (cheap), then render
 slices only for the flagged subset:
