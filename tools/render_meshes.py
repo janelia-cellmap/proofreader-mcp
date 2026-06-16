@@ -40,18 +40,25 @@ from pathlib import Path
 
 from mesh_sources import MeshSource, make_source
 
-# Six axis-aligned viewpoints as (label, camera-direction, up). The camera sits
-# along each +/- axis looking back at the object center, so the montage shows the
-# object from +X, -X, +Y, -Y, +Z, -Z. Consistent across objects.
-VIEWS: list[tuple[str, tuple[float, float, float], tuple[float, float, float]]] = [
-    ("+X", (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-    ("-X", (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-    ("+Y", (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
-    ("-Y", (0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
-    ("+Z", (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
-    ("-Z", (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
+# Six axis-aligned viewpoints as (label, camera-direction, up, axis). The camera
+# sits along each +/- axis looking back at the object center. Laid out as a 2x3
+# grid so each axis is a COLUMN with the + view on top and the - view beneath it:
+#   +X +Y +Z
+#   -X -Y -Z
+# ``axis`` (0/1/2 for x/y/z, or None) marks which panel shows that axis's extent,
+# so each column is annotated once.
+VIEWS: list[
+    tuple[str, tuple[float, float, float], tuple[float, float, float], int | None]
+] = [
+    ("+X", (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), 0),
+    ("+Y", (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 1),
+    ("+Z", (0.0, 0.0, 1.0), (0.0, 1.0, 0.0), 2),
+    ("-X", (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), None),
+    ("-Y", (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), None),
+    ("-Z", (0.0, 0.0, -1.0), (0.0, 1.0, 0.0), None),
 ]
 GRID_ROWS, GRID_COLS = 2, 3
+AXIS_NAMES = ("x", "y", "z")
 
 
 def _global_half_extent(source: MeshSource, ids: list[str]) -> float:
@@ -91,20 +98,23 @@ def _render_one(
     )
     plotter.set_background(background)
     center = mesh.center
-    dx, dy, dz = _extents_nm(mesh)
-    extent_text = f"{dx:.0f} x {dy:.0f} x {dz:.0f} nm"
+    extents = _extents_nm(mesh)
     # Camera distance: large enough to clear the object; irrelevant to scale under
     # parallel projection, which is fixed by parallel_scale below.
-    half = max(dx, dy, dz) / 2.0
+    half = max(extents) / 2.0
     distance = (parallel_scale or half) * 4.0 + half
 
-    for i, (label, direction, up) in enumerate(VIEWS):
+    for i, (label, direction, up, axis) in enumerate(VIEWS):
         plotter.subplot(i // GRID_COLS, i % GRID_COLS)
         plotter.add_mesh(mesh, color=color, smooth_shading=True, specular=0.3)
         plotter.add_text(label, position="upper_left", font_size=12, color="black")
-        plotter.add_text(
-            extent_text, position="lower_left", font_size=10, color="dimgray"
-        )
+        if axis is not None:
+            plotter.add_text(
+                f"{AXIS_NAMES[axis]} = {extents[axis]:.0f} nm",
+                position="lower_left",
+                font_size=10,
+                color="dimgray",
+            )
         position = [center[j] + direction[j] * distance for j in range(3)]
         plotter.camera_position = [tuple(position), tuple(center), up]
         if parallel_scale is not None:
@@ -116,7 +126,7 @@ def _render_one(
 
     plotter.screenshot(str(out_path))
     plotter.close()
-    return (dx, dy, dz)
+    return extents
 
 
 def _select_ids(

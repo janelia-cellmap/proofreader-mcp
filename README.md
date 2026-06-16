@@ -143,11 +143,18 @@ uv run python tools/render_meshes.py /path/to/mesh/multires /path/to/out \
     --source precomputed --lod 1 --organelle-type mitochondrion --limit 50
 ```
 
-Each PNG is a 2×3 montage of the six axis-aligned views (+X, −X, +Y, −Y, +Z, −Z) on a
-neutral background, with each panel labeled and annotated with the object's bounding-box
-extents in nm (mesh coordinates are already in nm). The extents are also written to the
-sidecar as `meta.extent_nm`. `--scale-mode global` (default) renders every object at the
-same world scale so size is comparable by eye. For precomputed layers, `--lod 0` is finest and higher is
+Each PNG is a 2×3 montage of the six axis-aligned views, laid out so each axis is a column
+with the + view on top and the − view beneath it:
+
+```
++X +Y +Z
+-X -Y -Z
+```
+
+Each column is annotated with that axis's bounding-box extent in nm (mesh coordinates are
+already in nm); the full `[dx, dy, dz]` is also written to the sidecar as `meta.extent_nm`.
+`--scale-mode global` (default) renders every object at the same world scale so size is
+comparable by eye. For precomputed layers, `--lod 0` is finest and higher is
 coarser/faster (it falls back to a coarser LOD if the requested one is missing); object ids
 come from the layer's `segment_properties`, or pass `--ids` explicitly. Headless GL on a
 cluster needs OSMesa/EGL or a virtual framebuffer (`xvfb-run`).
