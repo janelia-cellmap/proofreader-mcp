@@ -4,18 +4,17 @@
 Second-pass companion to ``render_meshes.py``. For each object it reads the raw
 EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived
 centroid and renders the three orthogonal center sections (perpendicular to X, Y,
-Z) through the object, so a reviewer can confirm a mesh-based call against the
-actual data (e.g. is an apparent overmerge a real thin neck?).
+Z), each paired with a mesh view from the SAME direction so you can see where the
+slice comes from:
 
-Each output PNG is a row of panels separated by dividers:
+    [ mesh along X ] [ mesh along Y ] [ mesh along Z ]
+    [  X section   ] [  Y section   ] [  Z section   ]
 
-    [ X section ] [ Y section ] [ Z section ] [ mesh + cut planes ]
-
-The three section panels show raw EM (grayscale, per-slice auto-contrast) with the
-object's own segmentation overlaid in a light translucent tint, and a colored
-border per axis (X red, Y green, Z blue). The optional 4th panel (when
-``--mesh-source`` is given) shows the object's mesh with the three cutting planes
-drawn in the matching colors, so you can see where each section was taken.
+Each column is one axis (border-colored X red / Y green / Z blue). The mesh view
+is oriented to match its section (e.g. the mesh-along-X view and the X section
+both show the Y-Z plane), and is drawn semi-transparent. Sections are raw EM
+(grayscale, fixed contrast window) with the object's segmentation overlaid as a
+light translucent tint.
 
 Intended to run STAGED: classify meshes first, then render slices only for the
 flagged subset (``--labels likely_overmerged,likely_oversegmented,uncertain``).
@@ -27,6 +26,7 @@ Usage::
         --raw /nrs/cellmap/data/.../em/fibsem-uint8 \\
         --seg /nrs/cellmap/.../jrc_P3_E5_D1_N2.zarr/mito \\
         --mesh-source /nrs/cellmap/.../mito/multires \\
+        --contrast 84,152 \\
         --labels likely_overmerged,likely_oversegmented,uncertain
 """
 
@@ -42,15 +42,22 @@ from PIL import Image, ImageDraw, ImageFont
 
 from proofreader_mcp.storage import Store
 
-# (label, axis index in z,y,x order, RGB color). Color ties each section panel to
-# its plane in the mesh panel.
+# (label, axis index in z,y,x order, RGB color).
 PLANES = [
     ("X", 2, (220, 60, 60)),
     ("Y", 1, (40, 175, 70)),
     ("Z", 0, (70, 120, 225)),
 ]
+# Mesh camera per viewing axis (x,y,z index): (direction, up). Matches the mesh
+# montage's +X/+Y/+Z views so each mesh view lines up with its section.
+MESH_VIEW = {
+    0: ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # along X
+    1: ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),  # along Y
+    2: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),  # along Z
+}
 OVERLAY_RGB = (235, 90, 90)
 OVERLAY_ALPHA = 0.20  # light tint so the EM underneath stays readable
+MESH_OPACITY = 0.4
 SEP = 6
 SEP_COLOR = (30, 30, 30)
 
@@ -82,9 +89,8 @@ def _crop_box(center_zyx, half_zyx, scale, translation, shape):
     return out
 
 
-def _auto_gray_rgb(slice2d, plo, phi):
-    """Per-slice percentile auto-contrast -> grayscale RGB."""
-    lo, hi = np.percentile(slice2d, [plo, phi])
+def _gray_rgb(slice2d, lo, hi):
+    """Fixed-window contrast -> grayscale RGB."""
     norm = np.clip((slice2d.astype(np.float32) - lo) / max(hi - lo, 1e-6), 0, 1)
     g = (norm * 255).astype(np.uint8)
     return np.stack([g, g, g], axis=-1)
@@ -114,40 +120,33 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
     return img
 
 
-def _section_panel(raw_crop, seg_crop, axis, obj_id, color, cell, plo, phi, rb, sb):
-    """Center section perpendicular to `axis`: raw + light seg overlay, bordered."""
-    ri = raw_crop.shape[axis] // 2
-    si = seg_crop.shape[axis] // 2
-    raw2d = np.take(raw_crop, ri, axis=axis)
-    seg2d = np.take(seg_crop, si, axis=axis) == int(obj_id)
-    base = Image.fromarray(_auto_gray_rgb(raw2d, plo, phi)).resize(
-        (cell, cell), Image.NEAREST
-    )
+def _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi):
+    """Center section perpendicular to `axis` (z,y,x index): raw + light overlay."""
+    raw2d = np.take(raw_crop, raw_crop.shape[axis] // 2, axis=axis)
+    seg2d = np.take(seg_crop, seg_crop.shape[axis] // 2, axis=axis) == int(obj_id)
+    base = Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     mask = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
         (cell, cell), Image.NEAREST
     )
-    comp = Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127))
-    return _bordered(comp, color, max(3, cell // 90))
+    return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127))
 
 
-def _mesh_panel(pv, mesh, center, extents, cell):
-    """Mesh with the three orthogonal cut planes drawn in the axis colors."""
+def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell):
+    """Semi-transparent mesh viewed along this axis, oriented to match the section."""
+    axis_xyz = 2 - axis_zyx
+    direction, up = MESH_VIEW[axis_xyz]
+    in_plane = [extent_xyz[i] for i in range(3) if i != axis_xyz]
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
     pl.set_background("white")
-    pl.add_mesh(mesh, color="lightgray", opacity=0.55, smooth_shading=True)
-    size = max(extents) * 1.25
-    for _label, axis, color in PLANES:
-        normal = [0.0, 0.0, 0.0]
-        normal[2 - axis] = 1.0  # axis is z,y,x index; convert to x,y,z normal
-        plane = pv.Plane(center=center, direction=normal, i_size=size, j_size=size)
-        pl.add_mesh(
-            plane, color=[c / 255 for c in color], opacity=0.32, show_edges=False
-        )
-    pl.camera_position = "iso"
-    pl.camera.zoom(1.2)
+    pl.add_mesh(mesh, color="lightgray", opacity=MESH_OPACITY, smooth_shading=True)
+    dist = max(extent_xyz) * 3 + max(extent_xyz)
+    pos = [center_xyz[j] + direction[j] * dist for j in range(3)]
+    pl.camera_position = [tuple(pos), tuple(center_xyz), up]
+    pl.enable_parallel_projection()
+    pl.camera.parallel_scale = max(in_plane) / 2 * 1.1
     arr = pl.screenshot(return_img=True)
     pl.close()
-    return _bordered(Image.fromarray(arr).resize((cell, cell)), SEP_COLOR, 2)
+    return Image.fromarray(arr).resize((cell, cell))
 
 
 def render_object(
@@ -162,8 +161,8 @@ def render_object(
     pv,
     cell,
     margin,
-    plo,
-    phi,
+    lo,
+    hi,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -183,22 +182,31 @@ def render_object(
         return None
 
     font = _font(max(14, cell // 22))
-    panels = []
-    for label, axis, color in PLANES:
-        panel = _section_panel(
-            raw_crop, seg_crop, axis, obj_id, color, cell, plo, phi, rb, sb
-        )
-        ImageDraw.Draw(panel).text((8, 6), label, fill=color, font=font)
-        panels.append(panel)
-    if mesh is not None:
-        mp = _mesh_panel(pv, mesh, center_xyz, extent_xyz, cell)
-        ImageDraw.Draw(mp).text((8, 6), "mesh", fill=(40, 40, 40), font=font)
-        panels.append(mp)
+    have_mesh = mesh is not None
+    rows = 2 if have_mesh else 1
+    border = max(3, cell // 90)
+    canvas = Image.new(
+        "RGB",
+        (3 * cell + 4 * SEP, rows * cell + (rows + 1) * SEP),
+        SEP_COLOR,
+    )
 
-    n = len(panels)
-    canvas = Image.new("RGB", (n * cell + (n + 1) * SEP, cell + 2 * SEP), SEP_COLOR)
-    for i, panel in enumerate(panels):
-        canvas.paste(panel, (SEP + i * (cell + SEP), SEP))
+    for col, (label, axis, color) in enumerate(PLANES):
+        x = SEP + col * (cell + SEP)
+        if have_mesh:
+            mv = _bordered(
+                _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell), color, border
+            )
+            ImageDraw.Draw(mv).text((8, 6), label, fill=color, font=font)
+            canvas.paste(mv, (x, SEP))
+        sec = _bordered(
+            _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi),
+            color,
+            border,
+        )
+        if not have_mesh:
+            ImageDraw.Draw(sec).text((8, 6), label, fill=color, font=font)
+        canvas.paste(sec, (x, SEP + (rows - 1) * (cell + SEP)))
     return canvas
 
 
@@ -226,8 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--seg", required=True, type=Path, help="OME-Zarr segmentation group"
     )
-    p.add_argument("--mesh-source", default=None, help="mesh source for the 4th panel")
-    p.add_argument("--mesh-lod", type=int, default=2, help="LOD for the mesh panel")
+    p.add_argument("--mesh-source", default=None, help="mesh source for the top row")
+    p.add_argument("--mesh-lod", type=int, default=2, help="LOD for the mesh views")
     p.add_argument(
         "--ids", default=None, help="comma-separated ids (overrides --labels)"
     )
@@ -240,10 +248,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--cell-size", type=int, default=420, help="pixels per panel")
     p.add_argument("--margin", type=float, default=1.5, help="crop padding factor")
-    p.add_argument("--contrast", default="2,98", help="auto-contrast percentiles lo,hi")
+    p.add_argument(
+        "--contrast",
+        default="84,152",
+        help="fixed raw-EM intensity window lo,hi (uint8) applied to every slice",
+    )
     args = p.parse_args(argv)
 
-    plo, phi = (float(x) for x in args.contrast.split(","))
+    lo, hi = (float(x) for x in args.contrast.split(","))
 
     store = Store()
     rep = store.load_collection(args.collection_dir)
@@ -295,8 +307,8 @@ def main(argv: list[str] | None = None) -> int:
                 pv,
                 args.cell_size,
                 args.margin,
-                plo,
-                phi,
+                lo,
+                hi,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")

@@ -175,18 +175,20 @@ It is intentionally not part of the core MCP install.
 Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
 apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
 (behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
-each object's mesh-derived centroid and renders a row of panels separated by dividers:
+each object's mesh-derived centroid and renders three orthogonal center sections, each
+paired with a mesh view from the same direction so you can see where the slice comes from:
 
 ```
-[ X section ] [ Y section ] [ Z section ] [ mesh + cut planes ]
+[ mesh along X ] [ mesh along Y ] [ mesh along Z ]
+[  X section   ] [  Y section   ] [  Z section   ]
 ```
 
-The three section panels are the orthogonal center slices through the object — raw EM in
-grayscale with **per-slice percentile auto-contrast** (tune with `--contrast lo,hi`) and the
-object's segmentation overlaid as a **light** translucent tint, each with an axis-colored
-border (X red, Y green, Z blue). The 4th panel (when `--mesh-source` is given) shows the
-object's mesh with the three cutting planes drawn in the matching colors, so you can see
-where each section was taken.
+Each column is one axis (border-colored X red / Y green / Z blue). The top-row mesh view is
+oriented to match its section (e.g. mesh-along-X and the X section both show the Y–Z plane)
+and is drawn semi-transparent. Sections are raw EM in grayscale with a **fixed contrast
+window** (`--contrast lo,hi`, default `84,152` for this dataset) and the object's
+segmentation overlaid as a **light** translucent tint. The mesh row is shown only when
+`--mesh-source` is given (otherwise it's a single row of sections).
 
 Intended to run **staged** — classify meshes over everything first (cheap), then render
 slices only for the flagged subset:
