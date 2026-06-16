@@ -122,6 +122,30 @@ entry point:
 }
 ```
 
+## Generating the images (prototype renderer)
+
+The server consumes one composite PNG per object; producing those from meshes is an
+**upstream** concern. A prototype renderer lives in [tools/](tools/) (outside the installed
+package, behind the `render` optional extra) so you can test the full loop. It turns a
+directory of `{object_id}.ply` meshes into `{object_id}.png` montages plus an
+`objects.json` sidecar:
+
+```bash
+uv sync --extra render
+uv run python tools/render_meshes.py /path/to/meshes /path/to/out \
+    --organelle-type mitochondrion --resolution 1024
+```
+
+Each PNG is a 2×2 montage (front / side / top / perspective) on a neutral background;
+`--scale-mode global` (default) renders every object at the same world scale so size is
+comparable by eye. Headless GL on a cluster needs OSMesa/EGL or a virtual framebuffer
+(`xvfb-run`).
+
+This renderer is a **prototype destined for
+[cellmap-analyze](https://github.com/janelia-cellmap/cellmap-analyze)**, where dask can
+scale it and segmentation access can fill in `voxel_count` / `at_volume_edge` / `centroid`.
+It is intentionally not part of the core MCP install.
+
 ## Scope (v1)
 
 Image-centric proofreading only. Voxel volumes, mesh topology, morphology stats, and

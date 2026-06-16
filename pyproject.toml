@@ -20,6 +20,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "coverage", "build", "ruff"]
+# Heavy 3D-rendering deps for the prototype mesh->PNG tool in tools/. Kept out of
+# the core install; intended to migrate to cellmap-analyze once proven.
+render = ["pyvista", "numpy", "tqdm"]
 
 [project.scripts]
 proofreader-mcp = "proofreader_mcp.server:main"
