@@ -1,0 +1,121 @@
+# proofreader-mcp
+
+An [MCP](https://modelcontextprotocol.io) server for **image-centric proofreading of
+segmentation objects**. Given thousands of per-object mesh screenshots, it helps a host
+LLM identify the objects most likely to contain errors and present them to a human
+proofreader in priority order.
+
+Errors include segmentation faults (**overmerge**, **oversegment**) *and* object-validity
+faults (**junk/debris**, **misclassified** — e.g. an object labeled mitochondrion that
+isn't a plausible one).
+
+## Division of labor
+
+The server stores **no model** and makes **no inference calls**. It is a resource + state
+layer: it organizes images, exposes them as MCP resources, and persists classifications,
+rankings, and human verdicts. The host LLM does all of the visual judgment.
+
+## Input contract
+
+One composite PNG per object (a single image showing multiple viewpoints of just that
+object), in a directory, plus an optional sidecar `objects.json`:
+
+```json
+{
+  "collection_id": "jrc_mus-liver-zon-1_run42",
+  "organelle_type": "mitochondrion",
+  "objects": [
+    {
+      "object_id": "12345",
+      "image": "12345.png",
+      "meta": { "voxel_count": 84213, "at_volume_edge": false, "centroid": [0, 0, 0] }
+    }
+  ]
+}
+```
+
+- `image` filename convention fallback: `{object_id}.png`.
+- `organelle_type` selects the validity rubric. If absent, validity classes are skipped and
+  only structural classes apply.
+- `meta` is optional; `voxel_count` and `at_volume_edge` improve validity and oversegment
+  judgments when present, but are never required.
+
+If no `objects.json` is present, the collection is built by scanning the directory for
+`*.png` files, using each filename stem as the `object_id`.
+
+## Workflow
+
+1. `load_collection(path)` — register a directory of per-object composite PNGs.
+2. Iterate `list_objects`; for each, fetch the image and call `classify_object` with a
+   label + flags + confidence + rationale + action.
+3. `rank_objects` orders the verdicts by expected error cost.
+4. `export_queue` emits a sorted review queue; `record_review` captures human verdicts.
+
+## MCP surface
+
+**Resources**
+
+- `collection://{collection_id}` — object index + organelle_type + rubric
+- `object://{collection_id}/{object_id}` — the composite image as an image content block
+
+**Tools**
+
+- `load_collection(path)` — register a collection; reports missing images / orphan files
+- `list_objects(collection_id, page, page_size)` — paginated object IDs + meta + verdict status
+- `get_object_image(collection_id, object_id)` — the composite image block
+- `get_rubric(organelle_type)` — the validity rubric to inject into the prompt
+- `classify_object(collection_id, object_id, primary_label, confidence, rationale, recommended_action, flags, model_version)`
+- `rank_objects(collection_id, by)` — order verdicts by expected cost
+- `export_queue(collection_id, format)` — emit a priority-sorted queue (`csv` or `json`)
+- `record_review(collection_id, object_id, verdict, notes)` — capture a human verdict
+
+## Classification schema
+
+- `primary_label` ∈ {`acceptable`, `likely_overmerged`, `likely_oversegmented`, `junk`,
+  `misclassified`, `uncertain`}
+- `flags` — optional secondary observations from the same set
+- `confidence` ∈ [0, 1]
+- `rationale` — one or two sentences naming the visual evidence
+- `recommended_action` ∈ {`split`, `merge`, `discard`, `relabel`, `none`, `human_review`}
+
+Each verdict is persisted with the **image hash + model version** so re-runs are
+comparable.
+
+## Ranking
+
+Priority = expected error cost ≈ `confidence × severity`, where `severity` is a
+configurable per-label weight (default ordering: overmerge > oversegment > misclassified >
+junk; `acceptable` = 0). Falls back to `confidence` alone when no weights apply.
+
+## State
+
+Per-collection state (verdicts + human reviews) is persisted to `proofreader_state.json`
+inside the collection directory, keyed by object id and image hash.
+
+## Install & run
+
+```bash
+pip install -e ".[dev]"
+proofreader-mcp           # run the server over stdio
+```
+
+Register with an MCP host (e.g. Claude Desktop / Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "proofreader": { "command": "proofreader-mcp" }
+  }
+}
+```
+
+## Scope (v1)
+
+Image-centric proofreading only. Voxel volumes, mesh topology, morphology stats, and
+Neuroglancer integration are explicitly deferred; the architecture leaves seams for them
+(optional metadata, per-organelle rubrics, the validity-flag path). See
+[proofreader-mcp-design.md](proofreader-mcp-design.md) for the full design spec.
+
+## License
+
+BSD 3-Clause. See [LICENSE](LICENSE).
