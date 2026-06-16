@@ -175,25 +175,35 @@ It is intentionally not part of the core MCP install.
 Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
 apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
 (behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
-each object's mesh-derived centroid and renders a 3×3 montage: rows are the section planes
-perpendicular to X/Y/Z (matching the mesh montage's axis columns), columns are three slice
-positions through the object. Raw EM is grayscale with per-crop percentile contrast; the
-object's segmentation is overlaid translucent red.
+each object's mesh-derived centroid and renders a row of panels separated by dividers:
+
+```
+[ X section ] [ Y section ] [ Z section ] [ mesh + cut planes ]
+```
+
+The three section panels are the orthogonal center slices through the object — raw EM in
+grayscale with **per-slice percentile auto-contrast** (tune with `--contrast lo,hi`) and the
+object's segmentation overlaid as a **light** translucent tint, each with an axis-colored
+border (X red, Y green, Z blue). The 4th panel (when `--mesh-source` is given) shows the
+object's mesh with the three cutting planes drawn in the matching colors, so you can see
+where each section was taken.
 
 Intended to run **staged** — classify meshes over everything first (cheap), then render
 slices only for the flagged subset:
 
 ```bash
-uv sync --extra slices
+uv sync --extra slices --extra render --extra precomputed
 uv run python tools/render_slices.py ignore/snapshots_lod0_100 ignore/slices \
     --raw /nrs/cellmap/data/.../em/fibsem-uint8 \
     --seg /nrs/cellmap/.../jrc_P3_E5_D1_N2.zarr/mito \
+    --mesh-source /nrs/cellmap/.../mito/multires \
     --labels likely_overmerged,likely_oversegmented,uncertain
 ```
 
 Voxel size and offset are read from each volume's OME-Zarr metadata; the object centroid
 (`meta.centroid_nm`, written by the mesh renderer) maps directly to world coordinates.
-Pass explicit `--ids` instead of `--labels` to render specific objects.
+Pass explicit `--ids` instead of `--labels` to render specific objects; `--mesh-source` is
+optional (omit it for slices-only, 3-panel output).
 
 ## Scope (v1)
 
