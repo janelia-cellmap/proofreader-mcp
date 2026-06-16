@@ -1,22 +1,34 @@
 #!/usr/bin/env python
 """Prototype mesh -> composite-PNG renderer for proofreader-mcp.
 
-Turns a directory of per-object meshes ({object_id}.ply) into the one-composite-
-PNG-per-object input the MCP server consumes, plus an optional ``objects.json``
-sidecar. Each PNG is a 2x2 montage of fixed viewpoints with a neutral background.
+Turns per-object meshes into the one-composite-PNG-per-object input the MCP
+server consumes, plus an optional ``objects.json`` sidecar. Each PNG is a 2x2
+montage of fixed viewpoints with a neutral background.
 
-This is a PROTOTYPE living outside the installed package (see the ``[render]``
-optional extra). It is intended to migrate into cellmap-analyze, where dask and
-segmentation access can scale it and enrich the sidecar (voxel_count,
-at_volume_edge, centroid). Run it with::
+Two input sources (auto-detected, or forced with ``--source``):
 
-    uv sync --extra render
-    uv run python tools/render_meshes.py INPUT_DIR OUTPUT_DIR \
+* **files** — a directory of ``{object_id}.ply`` (or .obj/.stl) meshes.
+* **precomputed** — a Neuroglancer precomputed mesh layer (sharded/unsharded,
+  multi-LOD Draco), local or remote (``gs://``, ``https://``). Pick the level of
+  detail with ``--lod`` (0 = finest; higher = coarser/faster).
+
+This is a PROTOTYPE living outside the installed package (see the ``[render]`` and
+``[precomputed]`` optional extras). It is intended to migrate into cellmap-analyze,
+where dask can scale it and segmentation access can enrich the sidecar
+(voxel_count, at_volume_edge, centroid). Run it with::
+
+    uv sync --extra render --extra precomputed
+
+    # PLY files:
+    uv run python tools/render_meshes.py /path/to/plys /path/to/out \
         --organelle-type mitochondrion
 
-Headless note: VTK needs an offscreen GL context. On a cluster either use a build
-with OSMesa (``pip install --no-deps vtk-osmesa`` over pyvista's vtk) or pass
-``--xvfb`` to spin up a virtual framebuffer via ``pyvista.start_xvfb()``.
+    # precomputed multires at LOD 1:
+    uv run python tools/render_meshes.py /path/to/mesh/multires /path/to/out \
+        --source precomputed --lod 1 --organelle-type mitochondrion --limit 50
+
+Headless note: VTK needs an offscreen GL context. On a cluster use a VTK build
+with OSMesa/EGL, or wrap the call in ``xvfb-run``.
 """
 
 from __future__ import annotations
@@ -25,6 +37,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+from mesh_sources import MeshSource, make_source
 
 # Four fixed viewpoints as (label, azimuth, elevation) offsets from a front view.
 # Consistent across objects so the host LLM sees the same orientations everywhere.
@@ -36,19 +50,16 @@ VIEWS: list[tuple[str, float, float]] = [
 ]
 
 
-def _iter_meshes(input_dir: Path, pattern: str) -> list[Path]:
-    return sorted(input_dir.glob(pattern))
-
-
-def _global_half_extent(paths: list[Path], pv) -> float:
-    """Largest half-extent across all meshes, for a shared parallel-projection scale.
+def _global_half_extent(source: MeshSource, ids: list[str]) -> float:
+    """Largest half-extent across the selected meshes, for a shared scale.
 
     Rendering every object at the same world scale keeps size comparable by eye,
     which is what makes 'too small => junk' judgments possible without metadata.
+    Note: this loads each mesh once here and again at render time.
     """
     half = 0.0
-    for p in paths:
-        b = pv.read(p).bounds  # (xmin, xmax, ymin, ymax, zmin, zmax)
+    for oid in ids:
+        b = source.get(oid).bounds  # (xmin, xmax, ymin, ymax, zmin, zmax)
         span = max(b[1] - b[0], b[3] - b[2], b[5] - b[4])
         half = max(half, span / 2.0)
     return half or 1.0
@@ -56,14 +67,13 @@ def _global_half_extent(paths: list[Path], pv) -> float:
 
 def _render_one(
     pv,
-    mesh_path: Path,
+    mesh,
     out_path: Path,
     resolution: int,
     color: str,
     background: str,
     parallel_scale: float | None,
 ) -> None:
-    mesh = pv.read(mesh_path)
     plotter = pv.Plotter(
         off_screen=True, shape=(2, 2), window_size=(resolution, resolution)
     )
@@ -89,34 +99,53 @@ def _render_one(
     plotter.close()
 
 
+def _select_ids(
+    source: MeshSource, ids_arg: str | None, limit: int | None
+) -> list[str]:
+    if ids_arg:
+        # comma-separated list, or a path to a newline-delimited file
+        p = Path(ids_arg)
+        raw = p.read_text().split() if p.exists() else ids_arg.split(",")
+        ids = [s.strip() for s in raw if s.strip()]
+    else:
+        ids = source.list_ids()
+    return ids[:limit] if limit is not None else ids
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input_dir", type=Path, help="dir of {object_id}.ply meshes")
+    parser.add_argument("input", help="mesh dir, or precomputed layer path/URL")
     parser.add_argument("output_dir", type=Path, help="dir to write {object_id}.png")
-    parser.add_argument("--pattern", default="*.ply", help="glob for mesh files")
     parser.add_argument(
-        "--organelle-type", default=None, help="for the sidecar + rubric"
+        "--source",
+        choices=["auto", "files", "precomputed"],
+        default="auto",
+        help="input type (auto-detects precomputed by info/URL)",
+    )
+    parser.add_argument("--pattern", default="*.ply", help="glob for file source")
+    parser.add_argument(
+        "--lod",
+        type=int,
+        default=0,
+        help="precomputed level of detail (0=finest; falls back if unavailable)",
     )
     parser.add_argument(
-        "--collection-id", default=None, help="defaults to input dir name"
+        "--ids",
+        default=None,
+        help="comma-separated ids or path to a newline-delimited id file",
     )
+    parser.add_argument("--organelle-type", default=None, help="for sidecar + rubric")
+    parser.add_argument("--collection-id", default=None, help="defaults to input name")
     parser.add_argument("--resolution", type=int, default=1024, help="PNG side length")
     parser.add_argument("--color", default="lightgray", help="mesh color")
-    parser.add_argument(
-        "--background", default="white", help="neutral background color"
-    )
+    parser.add_argument("--background", default="white", help="neutral background")
     parser.add_argument(
         "--scale-mode",
         choices=["global", "per-object"],
         default="global",
         help="global keeps absolute size comparable across objects (recommended)",
     )
-    parser.add_argument(
-        "--limit", type=int, default=None, help="render only the first N"
-    )
-    parser.add_argument(
-        "--xvfb", action="store_true", help="start a virtual framebuffer"
-    )
+    parser.add_argument("--limit", type=int, default=None, help="render only first N")
     parser.add_argument(
         "--no-sidecar", action="store_true", help="skip writing objects.json"
     )
@@ -130,49 +159,44 @@ def main(argv: list[str] | None = None) -> int:
 
     from tqdm import tqdm
 
-    if args.xvfb:
-        if hasattr(pv, "start_xvfb"):
-            pv.start_xvfb()
-        else:
-            print(
-                "this pyvista has no start_xvfb; wrap the call in `xvfb-run` "
-                "instead, or rely on OSMesa/EGL.",
-                file=sys.stderr,
-            )
     pv.OFF_SCREEN = True
 
-    if not args.input_dir.is_dir():
-        print(f"not a directory: {args.input_dir}", file=sys.stderr)
+    try:
+        source = make_source(
+            args.input, kind=args.source, pattern=args.pattern, lod=args.lod
+        )
+    except Exception as exc:  # noqa: BLE001 - surface any backend setup error cleanly
+        print(f"could not open source: {exc}", file=sys.stderr)
         return 2
 
-    paths = _iter_meshes(args.input_dir, args.pattern)
-    if args.limit is not None:
-        paths = paths[: args.limit]
-    if not paths:
-        print(f"no meshes matched {args.pattern} in {args.input_dir}", file=sys.stderr)
-        return 1
+    try:
+        ids = _select_ids(source, args.ids, args.limit)
+        if not ids:
+            print("no objects to render", file=sys.stderr)
+            return 1
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    collection_id = args.collection_id or args.input_dir.resolve().name
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        collection_id = args.collection_id or Path(args.input).resolve().name
 
-    parallel_scale = None
-    if args.scale_mode == "global":
-        parallel_scale = _global_half_extent(paths, pv) * 1.1  # small margin
+        parallel_scale = None
+        if args.scale_mode == "global":
+            parallel_scale = _global_half_extent(source, ids) * 1.1  # small margin
 
-    objects = []
-    for mesh_path in tqdm(paths, desc="rendering", unit="obj"):
-        object_id = mesh_path.stem
-        out_path = args.output_dir / f"{object_id}.png"
-        _render_one(
-            pv,
-            mesh_path,
-            out_path,
-            resolution=args.resolution,
-            color=args.color,
-            background=args.background,
-            parallel_scale=parallel_scale,
-        )
-        objects.append({"object_id": object_id, "image": out_path.name, "meta": {}})
+        objects = []
+        for oid in tqdm(ids, desc="rendering", unit="obj"):
+            out_path = args.output_dir / f"{oid}.png"
+            _render_one(
+                pv,
+                source.get(oid),
+                out_path,
+                resolution=args.resolution,
+                color=args.color,
+                background=args.background,
+                parallel_scale=parallel_scale,
+            )
+            objects.append({"object_id": oid, "image": out_path.name, "meta": {}})
+    finally:
+        source.close()
 
     if not args.no_sidecar:
         sidecar = {

@@ -126,20 +126,32 @@ entry point:
 
 The server consumes one composite PNG per object; producing those from meshes is an
 **upstream** concern. A prototype renderer lives in [tools/](tools/) (outside the installed
-package, behind the `render` optional extra) so you can test the full loop. It turns a
-directory of `{object_id}.ply` meshes into `{object_id}.png` montages plus an
-`objects.json` sidecar:
+package, behind the `render` + `precomputed` optional extras) so you can test the full loop.
+It turns meshes into `{object_id}.png` montages plus an `objects.json` sidecar, from either
+of two sources (auto-detected, or forced with `--source`):
 
 ```bash
-uv sync --extra render
-uv run python tools/render_meshes.py /path/to/meshes /path/to/out \
+uv sync --extra render --extra precomputed
+
+# 1) a directory of {object_id}.ply (or .obj/.stl) files:
+uv run python tools/render_meshes.py /path/to/plys /path/to/out \
     --organelle-type mitochondrion --resolution 1024
+
+# 2) a Neuroglancer precomputed mesh layer (sharded/unsharded, multi-LOD Draco),
+#    local or remote (gs://, https://). Choose the level of detail with --lod:
+uv run python tools/render_meshes.py /path/to/mesh/multires /path/to/out \
+    --source precomputed --lod 1 --organelle-type mitochondrion --limit 50
 ```
 
 Each PNG is a 2×2 montage (front / side / top / perspective) on a neutral background;
 `--scale-mode global` (default) renders every object at the same world scale so size is
-comparable by eye. Headless GL on a cluster needs OSMesa/EGL or a virtual framebuffer
-(`xvfb-run`).
+comparable by eye. For precomputed layers, `--lod 0` is finest and higher is
+coarser/faster (it falls back to a coarser LOD if the requested one is missing); object ids
+come from the layer's `segment_properties`, or pass `--ids` explicitly. Headless GL on a
+cluster needs OSMesa/EGL or a virtual framebuffer (`xvfb-run`).
+
+The mesh-loading backends live in [tools/mesh_sources.py](tools/mesh_sources.py)
+(`FileMeshSource`, `PrecomputedMeshSource`), so new formats are easy to add.
 
 This renderer is a **prototype destined for
 [cellmap-analyze](https://github.com/janelia-cellmap/cellmap-analyze)**, where dask can
