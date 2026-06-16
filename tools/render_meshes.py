@@ -40,14 +40,18 @@ from pathlib import Path
 
 from mesh_sources import MeshSource, make_source
 
-# Four fixed viewpoints as (label, azimuth, elevation) offsets from a front view.
-# Consistent across objects so the host LLM sees the same orientations everywhere.
-VIEWS: list[tuple[str, float, float]] = [
-    ("front", 0.0, 0.0),
-    ("side", 90.0, 0.0),
-    ("top", 0.0, 90.0),
-    ("perspective", 45.0, 30.0),
+# Six axis-aligned viewpoints as (label, camera-direction, up). The camera sits
+# along each +/- axis looking back at the object center, so the montage shows the
+# object from +X, -X, +Y, -Y, +Z, -Z. Consistent across objects.
+VIEWS: list[tuple[str, tuple[float, float, float], tuple[float, float, float]]] = [
+    ("+X", (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    ("-X", (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    ("+Y", (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    ("-Y", (0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+    ("+Z", (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+    ("-Z", (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
 ]
+GRID_ROWS, GRID_COLS = 2, 3
 
 
 def _global_half_extent(source: MeshSource, ids: list[str]) -> float:
@@ -65,29 +69,44 @@ def _global_half_extent(source: MeshSource, ids: list[str]) -> float:
     return half or 1.0
 
 
+def _extents_nm(mesh) -> tuple[float, float, float]:
+    """(dx, dy, dz) bounding-box extents. Mesh coordinates are already in nm."""
+    b = mesh.bounds  # (xmin, xmax, ymin, ymax, zmin, zmax)
+    return (b[1] - b[0], b[3] - b[2], b[5] - b[4])
+
+
 def _render_one(
     pv,
     mesh,
     out_path: Path,
-    resolution: int,
+    cell_size: int,
     color: str,
     background: str,
     parallel_scale: float | None,
-) -> None:
+) -> tuple[float, float, float]:
     plotter = pv.Plotter(
-        off_screen=True, shape=(2, 2), window_size=(resolution, resolution)
+        off_screen=True,
+        shape=(GRID_ROWS, GRID_COLS),
+        window_size=(cell_size * GRID_COLS, cell_size * GRID_ROWS),
     )
     plotter.set_background(background)
     center = mesh.center
+    dx, dy, dz = _extents_nm(mesh)
+    extent_text = f"{dx:.0f} x {dy:.0f} x {dz:.0f} nm"
+    # Camera distance: large enough to clear the object; irrelevant to scale under
+    # parallel projection, which is fixed by parallel_scale below.
+    half = max(dx, dy, dz) / 2.0
+    distance = (parallel_scale or half) * 4.0 + half
 
-    for i, (label, azimuth, elevation) in enumerate(VIEWS):
-        plotter.subplot(i // 2, i % 2)
+    for i, (label, direction, up) in enumerate(VIEWS):
+        plotter.subplot(i // GRID_COLS, i % GRID_COLS)
         plotter.add_mesh(mesh, color=color, smooth_shading=True, specular=0.3)
-        plotter.add_text(label, font_size=8, color="black")
-        plotter.view_xy()  # deterministic base orientation
-        plotter.camera.focal_point = center
-        plotter.camera.azimuth = azimuth
-        plotter.camera.elevation = elevation
+        plotter.add_text(label, position="upper_left", font_size=12, color="black")
+        plotter.add_text(
+            extent_text, position="lower_left", font_size=10, color="dimgray"
+        )
+        position = [center[j] + direction[j] * distance for j in range(3)]
+        plotter.camera_position = [tuple(position), tuple(center), up]
         if parallel_scale is not None:
             # Set last: orientation changes can reset the parallel scale.
             plotter.enable_parallel_projection()
@@ -97,6 +116,7 @@ def _render_one(
 
     plotter.screenshot(str(out_path))
     plotter.close()
+    return (dx, dy, dz)
 
 
 def _select_ids(
@@ -136,7 +156,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--organelle-type", default=None, help="for sidecar + rubric")
     parser.add_argument("--collection-id", default=None, help="defaults to input name")
-    parser.add_argument("--resolution", type=int, default=1024, help="PNG side length")
+    parser.add_argument(
+        "--cell-size", type=int, default=512, help="pixel size of each montage panel"
+    )
     parser.add_argument("--color", default="lightgray", help="mesh color")
     parser.add_argument("--background", default="white", help="neutral background")
     parser.add_argument(
@@ -185,16 +207,22 @@ def main(argv: list[str] | None = None) -> int:
         objects = []
         for oid in tqdm(ids, desc="rendering", unit="obj"):
             out_path = args.output_dir / f"{oid}.png"
-            _render_one(
+            dx, dy, dz = _render_one(
                 pv,
                 source.get(oid),
                 out_path,
-                resolution=args.resolution,
+                cell_size=args.cell_size,
                 color=args.color,
                 background=args.background,
                 parallel_scale=parallel_scale,
             )
-            objects.append({"object_id": oid, "image": out_path.name, "meta": {}})
+            objects.append(
+                {
+                    "object_id": oid,
+                    "image": out_path.name,
+                    "meta": {"extent_nm": [round(dx, 1), round(dy, 1), round(dz, 1)]},
+                }
+            )
     finally:
         source.close()
 
