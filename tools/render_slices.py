@@ -151,8 +151,19 @@ def _mesh_panel(pv, mesh, center, extents, cell):
 
 
 def render_object(
-    obj_id, center_xyz, extent_xyz, raw, raw_st, seg, seg_st,
-    mesh, pv, cell, margin, plo, phi,
+    obj_id,
+    center_xyz,
+    extent_xyz,
+    raw,
+    raw_st,
+    seg,
+    seg_st,
+    mesh,
+    pv,
+    cell,
+    margin,
+    plo,
+    phi,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -162,8 +173,12 @@ def render_object(
 
     rb = _crop_box(center_zyx, half_zyx, rscale, rtrans, raw.shape)
     sb = _crop_box(center_zyx, half_zyx, sscale, strans, seg.shape)
-    raw_crop = np.asarray(raw[rb[0][0]:rb[0][1], rb[1][0]:rb[1][1], rb[2][0]:rb[2][1]])
-    seg_crop = np.asarray(seg[sb[0][0]:sb[0][1], sb[1][0]:sb[1][1], sb[2][0]:sb[2][1]])
+    raw_crop = np.asarray(
+        raw[rb[0][0] : rb[0][1], rb[1][0] : rb[1][1], rb[2][0] : rb[2][1]]
+    )
+    seg_crop = np.asarray(
+        seg[sb[0][0] : sb[0][1], sb[1][0] : sb[1][1], sb[2][0] : sb[2][1]]
+    )
     if raw_crop.size == 0:
         return None
 
@@ -208,10 +223,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("collection_dir", type=Path, help="dir with objects.json (+ state)")
     p.add_argument("output_dir", type=Path, help="dir to write {id}.png montages")
     p.add_argument("--raw", required=True, type=Path, help="OME-Zarr raw EM group")
-    p.add_argument("--seg", required=True, type=Path, help="OME-Zarr segmentation group")
+    p.add_argument(
+        "--seg", required=True, type=Path, help="OME-Zarr segmentation group"
+    )
     p.add_argument("--mesh-source", default=None, help="mesh source for the 4th panel")
     p.add_argument("--mesh-lod", type=int, default=2, help="LOD for the mesh panel")
-    p.add_argument("--ids", default=None, help="comma-separated ids (overrides --labels)")
+    p.add_argument(
+        "--ids", default=None, help="comma-separated ids (overrides --labels)"
+    )
     p.add_argument(
         "--labels",
         default=None,
@@ -237,7 +256,9 @@ def main(argv: list[str] | None = None) -> int:
 
     raw, rscale, rtrans = open_level0(args.raw)
     seg, sscale, strans = open_level0(args.seg)
-    print(f"raw {raw.shape}@{rscale}nm  seg {seg.shape}@{sscale}nm  ->  {len(ids)} objects")
+    print(
+        f"raw {raw.shape}@{rscale}nm  seg {seg.shape}@{sscale}nm  ->  {len(ids)} objects"
+    )
 
     pv = mesh_source = None
     if args.mesh_source:
@@ -263,9 +284,19 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception as exc:  # noqa: BLE001
                     print(f"  {oid}: mesh unavailable ({exc}); slices only")
             grid = render_object(
-                oid, meta["centroid_nm"], meta["extent_nm"],
-                raw, (rscale, rtrans), seg, (sscale, strans),
-                mesh, pv, args.cell_size, args.margin, plo, phi,
+                oid,
+                meta["centroid_nm"],
+                meta["extent_nm"],
+                raw,
+                (rscale, rtrans),
+                seg,
+                (sscale, strans),
+                mesh,
+                pv,
+                args.cell_size,
+                args.margin,
+                plo,
+                phi,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")
