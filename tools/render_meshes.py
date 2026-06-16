@@ -121,17 +121,23 @@ def _render_one(
     # parallel projection, which is fixed by parallel_scale below.
     half = max(extents) / 2.0
     distance = (parallel_scale or half) * 4.0 + half
+    # Font sizes scale with the panel so labels stay large and legible while still
+    # fitting the full "x_extent = NNNN nm" string within one panel's width.
+    axis_font = max(14, cell_size // 20)
+    extent_font = max(16, cell_size // 19)
 
     for i, (label, direction, up, axis) in enumerate(VIEWS):
         plotter.subplot(i // GRID_COLS, i % GRID_COLS)
         plotter.add_mesh(mesh, color=color, smooth_shading=True, specular=0.3)
-        plotter.add_text(label, position="upper_left", font_size=12, color="black")
+        plotter.add_text(
+            label, position="upper_left", font_size=axis_font, color="black"
+        )
         if axis is not None:
             plotter.add_text(
                 f"{AXIS_NAMES[axis]}_extent = {extents[axis]:.0f} nm",
                 position="lower_left",
-                font_size=10,
-                color="dimgray",
+                font_size=extent_font,
+                color="black",
             )
         position = [center[j] + direction[j] * distance for j in range(3)]
         plotter.camera_position = [tuple(position), tuple(center), up]
@@ -140,9 +146,9 @@ def _render_one(
             # Shared scale: set last, as orientation changes can reset it.
             plotter.camera.parallel_scale = parallel_scale
         else:
-            # Per-object: fit this object to the panel, with a small margin.
+            # Per-object: fit this object to the panel, then zoom in to fill it.
             plotter.reset_camera()
-            plotter.camera.zoom(0.9)
+            plotter.camera.zoom(1.4)
 
     plotter.screenshot(str(out_path))
     plotter.close()
@@ -224,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--organelle-type", default=None, help="for sidecar + rubric")
     parser.add_argument("--collection-id", default=None, help="defaults to input name")
     parser.add_argument(
-        "--cell-size", type=int, default=512, help="pixel size of each montage panel"
+        "--cell-size", type=int, default=640, help="pixel size of each montage panel"
     )
     parser.add_argument("--color", default="lightgray", help="mesh color")
     parser.add_argument("--background", default="white", help="neutral background")
