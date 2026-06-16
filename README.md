@@ -94,17 +94,28 @@ inside the collection directory, keyed by object id and image hash.
 
 ## Install & run
 
+This project uses [uv](https://docs.astral.sh/uv/). The committed `uv.lock` pins the full
+dependency set for reproducible environments.
+
 ```bash
-pip install -e ".[dev]"
-proofreader-mcp           # run the server over stdio
+uv sync --extra dev    # create .venv and install the project + dev tools
+uv run proofreader-mcp # run the server over stdio
+uv run pytest          # run the test suite
 ```
 
-Register with an MCP host (e.g. Claude Desktop / Claude Code):
+(Plain pip also works, since `pyproject.toml` is standard PEP 621:
+`pip install -e ".[dev]"` then `proofreader-mcp`.)
+
+Register with an MCP host (e.g. Claude Desktop / Claude Code) — point it at the uv-managed
+entry point:
 
 ```json
 {
   "mcpServers": {
-    "proofreader": { "command": "proofreader-mcp" }
+    "proofreader": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/proofreader-mcp", "proofreader-mcp"]
+    }
   }
 }
 ```
