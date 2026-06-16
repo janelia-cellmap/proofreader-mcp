@@ -2,8 +2,10 @@
 """Prototype mesh -> composite-PNG renderer for proofreader-mcp.
 
 Turns per-object meshes into the one-composite-PNG-per-object input the MCP
-server consumes, plus an optional ``objects.json`` sidecar. Each PNG is a 2x2
-montage of fixed viewpoints with a neutral background.
+server consumes, plus an optional ``objects.json`` sidecar. Each PNG is a 2x3
+montage of the six axis-aligned views (columns = x/y/z, + on top, - beneath) on a
+neutral background, with each axis's extent in nm. Rendering is parallelized across
+processes (``--workers``, default = available CPUs), since VTK is not thread-safe.
 
 Two input sources (auto-detected, or forced with ``--source``):
 
@@ -34,11 +36,27 @@ with OSMesa/EGL, or wrap the call in ``xvfb-run``.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from mesh_sources import MeshSource, make_source
+
+
+def _available_cpus() -> int:
+    """CPU count to parallelize over, cross-platform.
+
+    ``os.sched_getaffinity`` (Linux) respects cpu affinity / cgroup limits; macOS
+    and others fall back to ``os.cpu_count``.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
 
 # Six axis-aligned viewpoints as (label, camera-direction, up, axis). The camera
 # sits along each +/- axis looking back at the object center. Laid out as a 2x3
@@ -142,6 +160,43 @@ def _select_ids(
     return ids[:limit] if limit is not None else ids
 
 
+# --------------------------------------------------------------------------
+# Process-pool workers. pyvista/VTK is not thread-safe, so we render in separate
+# processes. Each worker builds its own MeshSource once (CloudVolume objects and
+# VTK contexts don't cross the process boundary).
+# --------------------------------------------------------------------------
+
+_WORKER: dict = {}
+
+
+def _init_worker(kind: str, source: str, pattern: str, lod: int) -> None:
+    import pyvista as pv
+
+    pv.OFF_SCREEN = True
+    src = make_source(source, kind=kind, pattern=pattern, lod=lod)
+    _WORKER["source"] = src
+    _WORKER["pv"] = pv
+    atexit.register(src.close)
+
+
+def _worker_bounds(oid: str) -> tuple[str, tuple[float, float, float]]:
+    return oid, _extents_nm(_WORKER["source"].get(oid))
+
+
+def _worker_render(task: tuple) -> tuple[str, tuple[float, float, float]]:
+    oid, out_dir, cell_size, color, background, parallel_scale = task
+    ext = _render_one(
+        _WORKER["pv"],
+        _WORKER["source"].get(oid),
+        Path(out_dir) / f"{oid}.png",
+        cell_size=cell_size,
+        color=color,
+        background=background,
+        parallel_scale=parallel_scale,
+    )
+    return oid, ext
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="mesh dir, or precomputed layer path/URL")
@@ -179,6 +234,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--limit", type=int, default=None, help="render only first N")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=_available_cpus(),
+        help="parallel render processes (default: available CPUs)",
+    )
+    parser.add_argument(
         "--no-sidecar", action="store_true", help="skip writing objects.json"
     )
     args = parser.parse_args(argv)
@@ -191,50 +252,98 @@ def main(argv: list[str] | None = None) -> int:
 
     from tqdm import tqdm
 
+    from mesh_sources import is_precomputed
+
     pv.OFF_SCREEN = True
 
+    # Resolve the source kind once so each worker doesn't re-detect it.
+    kind = args.source
+    if kind == "auto":
+        kind = "precomputed" if is_precomputed(args.input) else "files"
+
+    # Enumerate ids (and validate the source opens) in the main process.
     try:
-        source = make_source(
-            args.input, kind=args.source, pattern=args.pattern, lod=args.lod
-        )
+        index = make_source(args.input, kind=kind, pattern=args.pattern, lod=args.lod)
     except Exception as exc:  # noqa: BLE001 - surface any backend setup error cleanly
         print(f"could not open source: {exc}", file=sys.stderr)
         return 2
-
     try:
-        ids = _select_ids(source, args.ids, args.limit)
-        if not ids:
-            print("no objects to render", file=sys.stderr)
-            return 1
-
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        collection_id = args.collection_id or Path(args.input).resolve().name
-
-        parallel_scale = None
-        if args.scale_mode == "global":
-            parallel_scale = _global_half_extent(source, ids) * 1.1  # small margin
-
-        objects = []
-        for oid in tqdm(ids, desc="rendering", unit="obj"):
-            out_path = args.output_dir / f"{oid}.png"
-            dx, dy, dz = _render_one(
-                pv,
-                source.get(oid),
-                out_path,
-                cell_size=args.cell_size,
-                color=args.color,
-                background=args.background,
-                parallel_scale=parallel_scale,
-            )
-            objects.append(
-                {
-                    "object_id": oid,
-                    "image": out_path.name,
-                    "meta": {"extent_nm": [round(dx, 1), round(dy, 1), round(dz, 1)]},
-                }
-            )
+        ids = _select_ids(index, args.ids, args.limit)
     finally:
-        source.close()
+        index.close()
+    if not ids:
+        print("no objects to render", file=sys.stderr)
+        return 1
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    collection_id = args.collection_id or Path(args.input).resolve().name
+    workers = max(1, min(args.workers, len(ids)))
+    use_global = args.scale_mode == "global"
+
+    extents: dict[str, tuple[float, float, float]] = {}
+    parallel_scale: float | None = None
+
+    if workers == 1:
+        source = make_source(args.input, kind=kind, pattern=args.pattern, lod=args.lod)
+        try:
+            if use_global:
+                parallel_scale = _global_half_extent(source, ids) * 1.1
+            for oid in tqdm(ids, desc="rendering", unit="obj"):
+                extents[oid] = _render_one(
+                    pv,
+                    source.get(oid),
+                    args.output_dir / f"{oid}.png",
+                    cell_size=args.cell_size,
+                    color=args.color,
+                    background=args.background,
+                    parallel_scale=parallel_scale,
+                )
+        finally:
+            source.close()
+    else:
+        init = (kind, args.input, args.pattern, args.lod)
+        with ProcessPoolExecutor(
+            max_workers=workers, initializer=_init_worker, initargs=init
+        ) as ex:
+            # Global scale needs every object's bounds before any render starts.
+            if use_global:
+                half = 0.0
+                for oid, ext in tqdm(
+                    ex.map(_worker_bounds, ids),
+                    total=len(ids),
+                    desc="bounds",
+                    unit="obj",
+                ):
+                    extents[oid] = ext
+                    half = max(half, max(ext) / 2.0)
+                parallel_scale = (half or 1.0) * 1.1
+            tasks = [
+                (
+                    oid,
+                    str(args.output_dir),
+                    args.cell_size,
+                    args.color,
+                    args.background,
+                    parallel_scale,
+                )
+                for oid in ids
+            ]
+            for oid, ext in tqdm(
+                ex.map(_worker_render, tasks),
+                total=len(ids),
+                desc="rendering",
+                unit="obj",
+            ):
+                extents[oid] = ext
+
+    objects = [
+        {
+            "object_id": oid,
+            "image": f"{oid}.png",
+            "meta": {"extent_nm": [round(v, 1) for v in extents[oid]]},
+        }
+        for oid in ids
+    ]
 
     if not args.no_sidecar:
         sidecar = {
