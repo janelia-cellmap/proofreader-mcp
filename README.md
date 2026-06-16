@@ -170,6 +170,31 @@ This renderer is a **prototype destined for
 scale it and segmentation access can fill in `voxel_count` / `at_volume_edge` / `centroid`.
 It is intentionally not part of the core MCP install.
 
+## Verifying against raw data (2D slices)
+
+Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
+apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
+(behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
+each object's mesh-derived centroid and renders a 3×3 montage: rows are the section planes
+perpendicular to X/Y/Z (matching the mesh montage's axis columns), columns are three slice
+positions through the object. Raw EM is grayscale with per-crop percentile contrast; the
+object's segmentation is overlaid translucent red.
+
+Intended to run **staged** — classify meshes over everything first (cheap), then render
+slices only for the flagged subset:
+
+```bash
+uv sync --extra slices
+uv run python tools/render_slices.py ignore/snapshots_lod0_100 ignore/slices \
+    --raw /nrs/cellmap/data/.../em/fibsem-uint8 \
+    --seg /nrs/cellmap/.../jrc_P3_E5_D1_N2.zarr/mito \
+    --labels likely_overmerged,likely_oversegmented,uncertain
+```
+
+Voxel size and offset are read from each volume's OME-Zarr metadata; the object centroid
+(`meta.centroid_nm`, written by the mesh renderer) maps directly to world coordinates.
+Pass explicit `--ids` instead of `--labels` to render specific objects.
+
 ## Scope (v1)
 
 Image-centric proofreading only. Voxel volumes, mesh topology, morphology stats, and

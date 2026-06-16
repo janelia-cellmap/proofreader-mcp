@@ -26,6 +26,9 @@ render = ["pyvista", "numpy", "tqdm"]
 # Reading Neuroglancer precomputed meshes (sharded/unsharded, multi-LOD Draco),
 # local or remote (gs://, https). Used by the renderer when --source precomputed.
 precomputed = ["cloud-volume"]
+# Reading OME-Zarr raw EM + segmentation volumes to render 2D cross-section
+# montages (tools/render_slices.py).
+slices = ["zarr", "numpy", "Pillow"]
 
 [project.scripts]
 proofreader-mcp = "proofreader_mcp.server:main"
@@ -54,3 +57,5 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # Embedded HTML/CSS/JS template strings exceed the line length on purpose.
 "tools/make_review_page.py" = ["E501"]
+# Prototype slice renderer: a few long array-slicing / f-string lines.
+"tools/render_slices.py" = ["E501"]
