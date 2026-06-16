@@ -128,19 +128,21 @@ def _render_one(
         plotter.add_text(label, position="upper_left", font_size=12, color="black")
         if axis is not None:
             plotter.add_text(
-                f"{AXIS_NAMES[axis]} = {extents[axis]:.0f} nm",
+                f"{AXIS_NAMES[axis]}_extent = {extents[axis]:.0f} nm",
                 position="lower_left",
                 font_size=10,
                 color="dimgray",
             )
         position = [center[j] + direction[j] * distance for j in range(3)]
         plotter.camera_position = [tuple(position), tuple(center), up]
+        plotter.enable_parallel_projection()
         if parallel_scale is not None:
-            # Set last: orientation changes can reset the parallel scale.
-            plotter.enable_parallel_projection()
+            # Shared scale: set last, as orientation changes can reset it.
             plotter.camera.parallel_scale = parallel_scale
         else:
+            # Per-object: fit this object to the panel, with a small margin.
             plotter.reset_camera()
+            plotter.camera.zoom(0.9)
 
     plotter.screenshot(str(out_path))
     plotter.close()
@@ -228,9 +230,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--background", default="white", help="neutral background")
     parser.add_argument(
         "--scale-mode",
-        choices=["global", "per-object"],
-        default="global",
-        help="global keeps absolute size comparable across objects (recommended)",
+        choices=["per-object", "global"],
+        default="per-object",
+        help="per-object fills the frame with each object (default); "
+        "global uses one shared scale so sizes are comparable by eye",
     )
     parser.add_argument("--limit", type=int, default=None, help="render only first N")
     parser.add_argument(
