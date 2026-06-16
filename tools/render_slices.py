@@ -4,17 +4,17 @@
 Second-pass companion to ``render_meshes.py``. For each object it reads the raw
 EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived
 centroid and renders the three orthogonal center sections (perpendicular to X, Y,
-Z), each paired with a mesh view showing where that section cuts:
+Z), each with the mesh viewed straight down the same axis above it so they line up:
 
-    [ mesh + X plane ] [ mesh + Y plane ] [ mesh + Z plane ]
-    [   X section    ] [   Y section    ] [   Z section    ]
+    [ mesh down X ] [ mesh down Y ] [ mesh down Z ]
+    [  X section  ] [  Y section  ] [  Z section  ]
 
-Each column is one axis (border-colored X red / Y green / Z blue). The top-row
-mesh is solid and drawn from one fixed 3D angle in every column; only the
-translucent colored cut plane (perpendicular to that column's axis) differs, so
-you can see where each section is taken. Sections are raw EM (grayscale, fixed
-contrast window) with the object's segmentation overlaid as a light translucent
-tint.
+Each column is one axis (border-colored X red / Y green / Z blue). The crop is a
+cube (same nm field of view in every axis), so all panels -- sections and mesh
+views -- share ONE nm/pixel scale; an object therefore looks smaller in the view
+down its long axis and larger in the others, instead of being stretched to fill.
+Sections are raw EM (grayscale, fixed contrast window) with the object's
+segmentation overlaid as a light translucent tint.
 
 Intended to run STAGED: classify meshes first, then render slices only for the
 flagged subset (``--labels likely_overmerged,likely_oversegmented,uncertain``).
@@ -48,7 +48,14 @@ PLANES = [
     ("Y", 1, (40, 175, 70)),
     ("Z", 0, (70, 120, 225)),
 ]
-PLANE_OPACITY = 0.4
+# Mesh camera per section axis (z,y,x index): (view direction, up) in x,y,z. Chosen
+# so the mesh's screen axes match the (flipud'd) section: X->+X, Y->-Y, Z->+Z, all
+# with the section's horizontal/vertical world axes lined up.
+MESH_VIEW = {
+    2: ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # X section: view down +X, up +Z
+    1: ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),  # Y section: view down -Y, up +Z
+    0: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),  # Z section: view down +Z, up +Y
+}
 OVERLAY_RGB = (235, 90, 90)
 OVERLAY_ALPHA = 0.10  # very light tint so the EM underneath stays clearly readable
 MESH_OPACITY = 1.0
@@ -115,9 +122,15 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
 
 
 def _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi):
-    """Center section perpendicular to `axis` (z,y,x index): raw + light overlay."""
-    raw2d = np.take(raw_crop, raw_crop.shape[axis] // 2, axis=axis)
-    seg2d = np.take(seg_crop, seg_crop.shape[axis] // 2, axis=axis) == int(obj_id)
+    """Center section perpendicular to `axis` (z,y,x index): raw + light overlay.
+
+    flipud puts the higher world coordinate at the top so the section's orientation
+    matches the axis-aligned mesh view above it.
+    """
+    raw2d = np.flipud(np.take(raw_crop, raw_crop.shape[axis] // 2, axis=axis))
+    seg2d = np.flipud(np.take(seg_crop, seg_crop.shape[axis] // 2, axis=axis)) == int(
+        obj_id
+    )
     base = Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     mask = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
         (cell, cell), Image.NEAREST
@@ -125,16 +138,13 @@ def _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi):
     return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127))
 
 
-def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, color):
-    """Solid mesh from a fixed 3D angle with the section's cut plane drawn through it.
+def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, parallel_scale):
+    """Solid mesh viewed straight down `axis`, oriented to line up with its section.
 
-    All three columns use the same camera, so only the colored plane (perpendicular
-    to this column's axis) differs -- making it clear where each section cuts.
+    ``parallel_scale`` is shared across all three axes (= half the cubic field of
+    view) so the mesh views and the sections all share one nm/pixel scale.
     """
-    axis_xyz = 2 - axis_zyx
-    normal = [0.0, 0.0, 0.0]
-    normal[axis_xyz] = 1.0
-    size = max(extent_xyz) * 1.4
+    direction, up = MESH_VIEW[axis_zyx]
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
     pl.set_background("white")
     # Match the mesh-montage look: lightgray, smooth shading, a little specular.
@@ -145,10 +155,11 @@ def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, color):
         smooth_shading=True,
         specular=0.3,
     )
-    plane = pv.Plane(center=center_xyz, direction=normal, i_size=size, j_size=size)
-    pl.add_mesh(plane, color=[c / 255 for c in color], opacity=PLANE_OPACITY)
-    pl.camera_position = "iso"
-    pl.camera.zoom(1.3)
+    dist = max(extent_xyz) * 4
+    pos = [center_xyz[j] + direction[j] * dist for j in range(3)]
+    pl.camera_position = [tuple(pos), tuple(center_xyz), up]
+    pl.enable_parallel_projection()
+    pl.camera.parallel_scale = parallel_scale
     arr = pl.screenshot(return_img=True)
     pl.close()
     return Image.fromarray(arr).resize((cell, cell))
@@ -172,8 +183,10 @@ def render_object(
     rscale, rtrans = raw_st
     sscale, strans = seg_st
     center_zyx = [center_xyz[2], center_xyz[1], center_xyz[0]]
-    extent_zyx = [extent_xyz[2], extent_xyz[1], extent_xyz[0]]
-    half_zyx = [e / 2 * margin for e in extent_zyx]
+    # Cubic field of view (same nm box in z/y/x) so every section -- and the mesh
+    # views -- share one nm/pixel scale, regardless of the object's aspect ratio.
+    fov_half = max(extent_xyz) / 2 * margin
+    half_zyx = [fov_half, fov_half, fov_half]
 
     rb = _crop_box(center_zyx, half_zyx, rscale, rtrans, raw.shape)
     sb = _crop_box(center_zyx, half_zyx, sscale, strans, seg.shape)
@@ -200,7 +213,7 @@ def render_object(
         x = SEP + col * (cell + SEP)
         if have_mesh:
             mv = _bordered(
-                _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, color),
+                _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, fov_half),
                 color,
                 border,
             )

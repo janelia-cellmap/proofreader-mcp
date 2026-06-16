@@ -175,21 +175,21 @@ It is intentionally not part of the core MCP install.
 Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
 apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
 (behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
-each object's mesh-derived centroid and renders three orthogonal center sections, each
-paired with a mesh view showing where that section cuts:
+each object's mesh-derived centroid and renders three orthogonal center sections, each with
+the mesh viewed straight down the same axis above it so they line up:
 
 ```
-[ mesh + X plane ] [ mesh + Y plane ] [ mesh + Z plane ]
-[   X section    ] [   Y section    ] [   Z section    ]
+[ mesh down X ] [ mesh down Y ] [ mesh down Z ]
+[  X section  ] [  Y section  ] [  Z section  ]
 ```
 
-Each column is one axis (border-colored X red / Y green / Z blue). The top-row mesh is
-solid and drawn from one fixed 3D angle in every column; only the translucent colored cut
-plane (perpendicular to that column's axis) differs, so you can see where each section is
-taken. Sections are raw EM in grayscale with a **fixed contrast window** (`--contrast
-lo,hi`, default `84,152` for this dataset) and the object's segmentation overlaid as a
-**light** translucent tint. The mesh row is shown only when `--mesh-source` is given
-(otherwise it's a single row of sections).
+Each column is one axis (border-colored X red / Y green / Z blue). The crop is a **cube**
+(same nm field of view in every axis), so all panels share **one nm/pixel scale** — an
+object looks smaller in the view down its long axis and larger in the others, rather than
+being stretched to fill each panel. Sections are raw EM in grayscale with a **fixed contrast
+window** (`--contrast lo,hi`, default `84,152` for this dataset) and the object's
+segmentation overlaid as a **light** translucent tint. The mesh row is shown only when
+`--mesh-source` is given (otherwise it's a single row of sections).
 
 Intended to run **staged** — classify meshes over everything first (cheap), then render
 slices only for the flagged subset:
