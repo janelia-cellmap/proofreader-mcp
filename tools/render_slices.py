@@ -4,17 +4,17 @@
 Second-pass companion to ``render_meshes.py``. For each object it reads the raw
 EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived
 centroid and renders the three orthogonal center sections (perpendicular to X, Y,
-Z), each paired with a mesh view from the SAME direction so you can see where the
-slice comes from:
+Z), each paired with a mesh view showing where that section cuts:
 
-    [ mesh along X ] [ mesh along Y ] [ mesh along Z ]
-    [  X section   ] [  Y section   ] [  Z section   ]
+    [ mesh + X plane ] [ mesh + Y plane ] [ mesh + Z plane ]
+    [   X section    ] [   Y section    ] [   Z section    ]
 
-Each column is one axis (border-colored X red / Y green / Z blue). The mesh view
-is oriented to match its section (e.g. the mesh-along-X view and the X section
-both show the Y-Z plane), and is drawn semi-transparent. Sections are raw EM
-(grayscale, fixed contrast window) with the object's segmentation overlaid as a
-light translucent tint.
+Each column is one axis (border-colored X red / Y green / Z blue). The top-row
+mesh is solid and drawn from one fixed 3D angle in every column; only the
+translucent colored cut plane (perpendicular to that column's axis) differs, so
+you can see where each section is taken. Sections are raw EM (grayscale, fixed
+contrast window) with the object's segmentation overlaid as a light translucent
+tint.
 
 Intended to run STAGED: classify meshes first, then render slices only for the
 flagged subset (``--labels likely_overmerged,likely_oversegmented,uncertain``).
@@ -48,13 +48,7 @@ PLANES = [
     ("Y", 1, (40, 175, 70)),
     ("Z", 0, (70, 120, 225)),
 ]
-# Mesh camera per viewing axis (x,y,z index): (direction, up). Matches the mesh
-# montage's +X/+Y/+Z views so each mesh view lines up with its section.
-MESH_VIEW = {
-    0: ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # along X
-    1: ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),  # along Y
-    2: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),  # along Z
-}
+PLANE_OPACITY = 0.4
 OVERLAY_RGB = (235, 90, 90)
 OVERLAY_ALPHA = 0.10  # very light tint so the EM underneath stays clearly readable
 MESH_OPACITY = 1.0
@@ -131,11 +125,16 @@ def _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi):
     return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127))
 
 
-def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell):
-    """Semi-transparent mesh viewed along this axis, oriented to match the section."""
+def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, color):
+    """Solid mesh from a fixed 3D angle with the section's cut plane drawn through it.
+
+    All three columns use the same camera, so only the colored plane (perpendicular
+    to this column's axis) differs -- making it clear where each section cuts.
+    """
     axis_xyz = 2 - axis_zyx
-    direction, up = MESH_VIEW[axis_xyz]
-    in_plane = [extent_xyz[i] for i in range(3) if i != axis_xyz]
+    normal = [0.0, 0.0, 0.0]
+    normal[axis_xyz] = 1.0
+    size = max(extent_xyz) * 1.4
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
     pl.set_background("white")
     # Match the mesh-montage look: lightgray, smooth shading, a little specular.
@@ -146,11 +145,10 @@ def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell):
         smooth_shading=True,
         specular=0.3,
     )
-    dist = max(extent_xyz) * 3 + max(extent_xyz)
-    pos = [center_xyz[j] + direction[j] * dist for j in range(3)]
-    pl.camera_position = [tuple(pos), tuple(center_xyz), up]
-    pl.enable_parallel_projection()
-    pl.camera.parallel_scale = max(in_plane) / 2 * 1.1
+    plane = pv.Plane(center=center_xyz, direction=normal, i_size=size, j_size=size)
+    pl.add_mesh(plane, color=[c / 255 for c in color], opacity=PLANE_OPACITY)
+    pl.camera_position = "iso"
+    pl.camera.zoom(1.3)
     arr = pl.screenshot(return_img=True)
     pl.close()
     return Image.fromarray(arr).resize((cell, cell))
@@ -202,7 +200,9 @@ def render_object(
         x = SEP + col * (cell + SEP)
         if have_mesh:
             mv = _bordered(
-                _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell), color, border
+                _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, color),
+                color,
+                border,
             )
             ImageDraw.Draw(mv).text((8, 6), label, fill=color, font=font)
             canvas.paste(mv, (x, SEP))
