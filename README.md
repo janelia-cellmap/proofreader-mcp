@@ -175,24 +175,25 @@ It is intentionally not part of the core MCP install.
 Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
 apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
 (behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
-each object's mesh-derived centroid and renders, per axis column (X/Y/Z), a depth-colored
-mesh view plus `--slices` N sections stepping through the object along that axis:
+each object's mesh-derived centroid and renders, per axis **row** (X/Y/Z), a depth-colored
+mesh view plus `--slices` N sections stepping through the object along that axis
+(near → far, left → right):
 
 ```
-[ mesh down X ] [ mesh down Y ] [ mesh down Z ]   <- colored by depth along the axis
-[   X slice 1 ] [   Y slice 1 ] [   Z slice 1 ]   <- blue border (near)
-      ...             ...             ...          <- middle row labeled "center"
-[   X slice N ] [   Y slice N ] [   Z slice N ]   <- red border (far)
+X | [mesh down X] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
+Y | [mesh down Y] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
+Z | [mesh down Z] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
 ```
 
-The mesh in each column is viewed straight down that axis and **colored by position along
-the axis** (blue near → red far); every slice's border uses the same color map, so a
-blue-bordered slice corresponds to the blue part of the mesh. The crop is a **cube** (same nm
-field of view in every axis), so all panels share **one nm/pixel scale** — an object looks
-smaller down its long axis and larger in the others. Each mesh panel is labeled
-`{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast window**
-(`--contrast lo,hi`, default `84,152` for this dataset) and the object's segmentation
-overlaid as a **light** translucent tint. The mesh row is shown only when `--mesh-source` is
+The mesh in each row is viewed straight down that axis and **colored by distance from the
+camera** along it (blue nearest → red farthest); every slice's border uses the same color
+map, so a blue-bordered slice corresponds to the blue part of the mesh. The crop is a
+**cube** (same nm field of view in every axis), so all panels share **one nm/pixel scale** —
+an object looks smaller down its long axis and larger in the others. Each mesh panel is
+labeled `{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast
+window** (`--contrast lo,hi`, default `84,152` for this dataset) and the object's
+segmentation overlaid as a **light** translucent tint — `--seg-color fixed` (light red) or
+`depth` (match the row's depth color). The mesh column is shown only when `--mesh-source` is
 given.
 
 Intended to run **staged** — classify meshes over everything first (cheap), then render

@@ -3,17 +3,16 @@
 
 Second-pass companion to ``render_meshes.py``. For each object it reads the raw
 EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived centroid
-and renders, per axis column (X/Y/Z), a depth-colored mesh view plus N sections
-stepping through the object along that axis:
+and renders, per axis ROW (X/Y/Z), a depth-colored mesh view plus N sections
+stepping through the object along that axis (near -> far, left -> right):
 
-    [ mesh down X ] [ mesh down Y ] [ mesh down Z ]   <- colored by depth
-    [   X slice 1 ] [   Y slice 1 ] [   Z slice 1 ]   <- blue border (near)
-       ...              ...              ...          <- center row labeled
-    [   X slice N ] [   Y slice N ] [   Z slice N ]   <- red border (far)
+    X | [mesh down X] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
+    Y | [mesh down Y] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
+    Z | [mesh down Z] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
 
-The mesh in each column is viewed straight down that axis and colored by position
-ALONG the axis (blue near -> red far); every slice row's border uses the same
-color map, so a blue-bordered slice corresponds to the blue part of the mesh, etc.
+The mesh in each row is viewed straight down that axis and colored by position
+ALONG the axis (blue near -> red far); every slice's border uses the same color
+map, so a blue-bordered slice corresponds to the blue part of the mesh, etc.
 The crop is a cube (same nm field of view in every axis), so all panels share ONE
 nm/pixel scale (an object looks smaller down its long axis, larger in the others).
 Sections are raw EM (grayscale, fixed contrast window) with the object's
@@ -113,9 +112,9 @@ def _gray_rgb(slice2d, lo, hi):
     return np.stack([g, g, g], axis=-1)
 
 
-def _overlay(rgb, mask2d):
+def _overlay(rgb, mask2d, tint_rgb=OVERLAY_RGB):
     if mask2d.any():
-        tint = np.array(OVERLAY_RGB, dtype=np.float32)
+        tint = np.array(tint_rgb, dtype=np.float32)
         blended = rgb.astype(np.float32) * (1 - OVERLAY_ALPHA) + tint * OVERLAY_ALPHA
         rgb = np.where(mask2d[..., None], blended.astype(np.uint8), rgb)
     return rgb
@@ -137,11 +136,11 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
     return img
 
 
-def _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi):
+def _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint):
     """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
 
     flipud puts the higher world coordinate at the top so the section's orientation
-    matches the axis-aligned mesh view above it.
+    matches the axis-aligned mesh view above it. ``tint`` is the seg overlay color.
     """
     ri = min(max(ri, 0), raw_crop.shape[axis] - 1)
     si = min(max(si, 0), seg_crop.shape[axis] - 1)
@@ -151,7 +150,7 @@ def _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi):
     mask = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
         (cell, cell), Image.NEAREST
     )
-    return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127))
+    return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127, tint))
 
 
 def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, parallel_scale):
@@ -209,6 +208,7 @@ def render_object(
     lo,
     hi,
     n_slices,
+    seg_color_mode,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -236,17 +236,18 @@ def render_object(
     # row 0 = nearest the camera (blue) ... last row = farthest (red).
     slice_colors = [_depth_color(i / (n_slices - 1)) for i in range(n_slices)]
 
-    nrow = n_slices + (1 if have_mesh else 0)
+    # Landscape layout: one ROW per axis (X/Y/Z), columns = [mesh] + N slices.
+    ncol = n_slices + (1 if have_mesh else 0)
     border = max(3, cell // 90)
     canvas = Image.new(
         "RGB",
-        (3 * cell + 4 * SEP, nrow * cell + (nrow + 1) * SEP),
+        (ncol * cell + (ncol + 1) * SEP, 3 * cell + 4 * SEP),
         SEP_COLOR,
     )
 
-    for col, (label, axis, color) in enumerate(PLANES):
-        x = SEP + col * (cell + SEP)
-        ax = 2 - axis  # x,y,z depth-axis index for this column
+    for r, (label, axis, color) in enumerate(PLANES):
+        y = SEP + r * (cell + SEP)
+        ax = 2 - axis  # x,y,z depth-axis index for this row
         ext_nm = extent_xyz[ax]
         # Order slices near->far along the viewing direction (camera on +X/-Y/+Z).
         s = MESH_VIEW[axis][0][ax]
@@ -255,7 +256,7 @@ def render_object(
             if s > 0
             else np.linspace(-SPAN_FRAC, SPAN_FRAC, n_slices)
         )
-        row = 0
+        col0 = 0
         if have_mesh:
             mv = _bordered(
                 _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, fov_half),
@@ -268,15 +269,18 @@ def render_object(
                 fill=color,
                 font=font,
             )
-            canvas.paste(mv, (x, SEP))
-            row = 1
+            canvas.paste(mv, (SEP, y))
+            col0 = 1
 
         for i, frac in enumerate(fracs):
             pos = center_xyz[ax] + ext_nm * frac
             ri = int(round((pos - rtrans[axis]) / rscale[axis])) - rb[axis][0]
             si = int(round((pos - strans[axis]) / sscale[axis])) - sb[axis][0]
+            tint = slice_colors[i] if seg_color_mode == "depth" else OVERLAY_RGB
             sec = _bordered(
-                _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi),
+                _section_at(
+                    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint
+                ),
                 slice_colors[i],
                 border,
             )
@@ -290,7 +294,8 @@ def render_object(
                     fill=color,
                     font=font,
                 )
-            canvas.paste(sec, (x, SEP + (row + i) * (cell + SEP)))
+            x = SEP + (col0 + i) * (cell + SEP)
+            canvas.paste(sec, (x, y))
     return canvas
 
 
@@ -341,6 +346,13 @@ def main(argv: list[str] | None = None) -> int:
         "--contrast",
         default="84,152",
         help="fixed raw-EM intensity window lo,hi (uint8) applied to every slice",
+    )
+    p.add_argument(
+        "--seg-color",
+        choices=["fixed", "depth"],
+        default="fixed",
+        help="seg overlay tint: 'fixed' light red, or 'depth' to match the row's "
+        "depth color (and the mesh)",
     )
     args = p.parse_args(argv)
 
@@ -399,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
                 lo,
                 hi,
                 args.slices,
+                args.seg_color,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")
