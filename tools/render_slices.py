@@ -3,16 +3,17 @@
 
 Second-pass companion to ``render_meshes.py``. For each object it reads the raw
 EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived centroid
-and renders, per axis ROW (X/Y/Z), a depth-colored mesh view plus N sections
+and renders, per axis ROW (X/Y/Z), a front + back mesh view plus N sections
 stepping through the object along that axis (near -> far, left -> right):
 
-    X | [mesh down X] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
-    Y | [mesh down Y] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
-    Z | [mesh down Z] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
+    X | [+X front] [-X back] [slice1 blue] ... [center] ... [sliceN red]
+    Y | [-Y front] [+Y back] [slice1 blue] ... [center] ... [sliceN red]
+    Z | [+Z front] [-Z back] [slice1 blue] ... [center] ... [sliceN red]
 
-The mesh in each row is viewed straight down that axis and colored by position
-ALONG the axis (blue near -> red far); every slice's border uses the same color
-map, so a blue-bordered slice corresponds to the blue part of the mesh, etc.
+The mesh is colored by position along the axis (blue near -> red far); the front
+view shows the near/blue side and the back view (camera flipped 180 deg) shows the
+far/red side, which the front can't. Every slice's border uses the same color map,
+so a blue-bordered slice corresponds to the blue part of the mesh, etc.
 The crop is a cube (same nm field of view in every axis), so all panels share ONE
 nm/pixel scale (an object looks smaller down its long axis, larger in the others).
 Sections are raw EM (grayscale, fixed contrast window) with the object's
@@ -153,26 +154,23 @@ def _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint):
     return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127, tint))
 
 
-def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, parallel_scale):
-    """Mesh viewed straight down `axis`, colored by depth ALONG that axis.
+def _depth_colors(mesh, ax, s, center_xyz, extent_xyz):
+    """Per-vertex RGB encoding distance from the FRONT camera along axis `ax`.
 
-    Surface color encodes position along the viewing/slicing axis (blue near ->
-    red far) using the same map as the slice borders, so each colored slice maps to
-    the matching-colored part of the mesh. ``parallel_scale`` is shared across all
-    three axes (= half the cubic field of view) for one nm/pixel scale everywhere.
+    blue = nearest the front camera, red = farthest. ``s`` is the front camera's
+    side (+1/-1). The same colors are reused for the back view, so the back shows
+    the red (far) side -- which the front view can't.
     """
-    direction, up = MESH_VIEW[axis_zyx]
-    ax = 2 - axis_zyx  # x,y,z index of the depth axis
-    s = direction[ax]  # which side the camera is on (+1 / -1)
-    # Color by distance FROM the camera so blue=nearest, red=farthest in every
-    # column (the camera sits on +X/-Y/+Z, so this is camera-relative, not absolute).
     depth = np.asarray(mesh.points)[:, ax]
     proj_lo = s * (center_xyz[ax] - extent_xyz[ax] * SPAN_FRAC)
     proj_hi = s * (center_xyz[ax] + extent_xyz[ax] * SPAN_FRAC)
     pmax, pmin = max(proj_lo, proj_hi), min(proj_lo, proj_hi)
     t = np.clip((pmax - s * depth) / (pmax - pmin + 1e-9), 0, 1)
-    colors = _DEPTH_LUT[(t * 255).astype(np.int64)]
+    return _DEPTH_LUT[(t * 255).astype(np.int64)]
 
+
+def _mesh_view(pv, mesh, direction, up, center_xyz, extent_xyz, cell, scale, colors):
+    """Render the (already depth-colored) mesh from the given camera direction."""
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
     pl.set_background("white")
     pl.add_mesh(
@@ -187,7 +185,7 @@ def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, parallel_scale)
     pos = [center_xyz[j] + direction[j] * dist for j in range(3)]
     pl.camera_position = [tuple(pos), tuple(center_xyz), up]
     pl.enable_parallel_projection()
-    pl.camera.parallel_scale = parallel_scale
+    pl.camera.parallel_scale = scale
     arr = pl.screenshot(return_img=True)
     pl.close()
     return Image.fromarray(arr).resize((cell, cell))
@@ -229,7 +227,8 @@ def render_object(
     if raw_crop.size == 0:
         return None
 
-    font = _font(max(14, cell // 22))
+    fsize = max(14, cell // 22)
+    font = _font(fsize)
     have_mesh = mesh is not None
     center_row = n_slices // 2
     # Each slice row gets a depth color (matches the mesh's depth coloring):
@@ -258,19 +257,56 @@ def render_object(
         )
         col0 = 0
         if have_mesh:
-            mv = _bordered(
-                _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, fov_half),
+            direction, up = MESH_VIEW[axis]
+            colors = _depth_colors(mesh, ax, s, center_xyz, extent_xyz)
+            front_sign = "+" if direction[ax] > 0 else "-"
+            back_sign = "-" if direction[ax] > 0 else "+"
+            back_dir = tuple(-d for d in direction)
+            # Front (shows the near/blue side) and back (shows the far/red side).
+            front = _bordered(
+                _mesh_view(
+                    pv,
+                    mesh,
+                    direction,
+                    up,
+                    center_xyz,
+                    extent_xyz,
+                    cell,
+                    fov_half,
+                    colors,
+                ),
                 color,
                 border,
             )
-            ImageDraw.Draw(mv).text(
-                (8, 6),
+            fd = ImageDraw.Draw(front)
+            fd.text((8, 6), f"{front_sign}{label}", fill=color, font=font)
+            fd.text(
+                (8, 6 + fsize + 4),
                 f"{label.lower()}_extent = {ext_nm:.0f} nm",
                 fill=color,
                 font=font,
             )
-            canvas.paste(mv, (SEP, y))
-            col0 = 1
+            canvas.paste(front, (SEP, y))
+            back = _bordered(
+                _mesh_view(
+                    pv,
+                    mesh,
+                    back_dir,
+                    up,
+                    center_xyz,
+                    extent_xyz,
+                    cell,
+                    fov_half,
+                    colors,
+                ),
+                color,
+                border,
+            )
+            ImageDraw.Draw(back).text(
+                (8, 6), f"{back_sign}{label}", fill=color, font=font
+            )
+            canvas.paste(back, (SEP + (cell + SEP), y))
+            col0 = 2
 
         for i, frac in enumerate(fracs):
             pos = center_xyz[ax] + ext_nm * frac

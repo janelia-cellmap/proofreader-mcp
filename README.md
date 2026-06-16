@@ -175,19 +175,20 @@ It is intentionally not part of the core MCP install.
 Mesh shape alone can be ambiguous — an apparent overmerge may be a real thin neck, an
 apparent oversegment a true membrane boundary. [tools/render_slices.py](tools/render_slices.py)
 (behind the `slices` extra) reads the raw EM and the voxel segmentation (OME-Zarr) around
-each object's mesh-derived centroid and renders, per axis **row** (X/Y/Z), a depth-colored
+each object's mesh-derived centroid and renders, per axis **row** (X/Y/Z), a front + back
 mesh view plus `--slices` N sections stepping through the object along that axis
 (near → far, left → right):
 
 ```
-X | [mesh down X] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
-Y | [mesh down Y] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
-Z | [mesh down Z] [slice1 blue] [slice2] [center] [slice4] [slice5 red]
+X | [+X front] [-X back] [slice1 blue] ... [center] ... [sliceN red]
+Y | [-Y front] [+Y back] [slice1 blue] ... [center] ... [sliceN red]
+Z | [+Z front] [-Z back] [slice1 blue] ... [center] ... [sliceN red]
 ```
 
-The mesh in each row is viewed straight down that axis and **colored by distance from the
-camera** along it (blue nearest → red farthest); every slice's border uses the same color
-map, so a blue-bordered slice corresponds to the blue part of the mesh. The crop is a
+The mesh is **colored by distance from the front camera** along the axis (blue nearest → red
+farthest); the **front** view shows the near/blue side and the **back** view (camera flipped
+180°) shows the far/red side, which the front can't. Every slice's border uses the same
+color map, so a blue-bordered slice corresponds to the blue part of the mesh. The crop is a
 **cube** (same nm field of view in every axis), so all panels share **one nm/pixel scale** —
 an object looks smaller down its long axis and larger in the others. Each mesh panel is
 labeled `{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast
