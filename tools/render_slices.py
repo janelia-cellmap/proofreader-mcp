@@ -164,11 +164,14 @@ def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell, parallel_scale)
     """
     direction, up = MESH_VIEW[axis_zyx]
     ax = 2 - axis_zyx  # x,y,z index of the depth axis
+    s = direction[ax]  # which side the camera is on (+1 / -1)
+    # Color by distance FROM the camera so blue=nearest, red=farthest in every
+    # column (the camera sits on +X/-Y/+Z, so this is camera-relative, not absolute).
     depth = np.asarray(mesh.points)[:, ax]
-    span = extent_xyz[ax] * 2 * SPAN_FRAC
-    t = np.clip(
-        (depth - (center_xyz[ax] - extent_xyz[ax] * SPAN_FRAC)) / (span + 1e-9), 0, 1
-    )
+    proj_lo = s * (center_xyz[ax] - extent_xyz[ax] * SPAN_FRAC)
+    proj_hi = s * (center_xyz[ax] + extent_xyz[ax] * SPAN_FRAC)
+    pmax, pmin = max(proj_lo, proj_hi), min(proj_lo, proj_hi)
+    t = np.clip((pmax - s * depth) / (pmax - pmin + 1e-9), 0, 1)
     colors = _DEPTH_LUT[(t * 255).astype(np.int64)]
 
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
@@ -229,8 +232,8 @@ def render_object(
     font = _font(max(14, cell // 22))
     have_mesh = mesh is not None
     center_row = n_slices // 2
-    fracs = np.linspace(-SPAN_FRAC, SPAN_FRAC, n_slices)
-    # Each slice row gets a depth color (matches the mesh's depth coloring).
+    # Each slice row gets a depth color (matches the mesh's depth coloring):
+    # row 0 = nearest the camera (blue) ... last row = farthest (red).
     slice_colors = [_depth_color(i / (n_slices - 1)) for i in range(n_slices)]
 
     nrow = n_slices + (1 if have_mesh else 0)
@@ -245,6 +248,13 @@ def render_object(
         x = SEP + col * (cell + SEP)
         ax = 2 - axis  # x,y,z depth-axis index for this column
         ext_nm = extent_xyz[ax]
+        # Order slices near->far along the viewing direction (camera on +X/-Y/+Z).
+        s = MESH_VIEW[axis][0][ax]
+        fracs = (
+            np.linspace(SPAN_FRAC, -SPAN_FRAC, n_slices)
+            if s > 0
+            else np.linspace(-SPAN_FRAC, SPAN_FRAC, n_slices)
+        )
         row = 0
         if have_mesh:
             mv = _bordered(
