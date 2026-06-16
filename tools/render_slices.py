@@ -235,8 +235,9 @@ def render_object(
     # row 0 = nearest the camera (blue) ... last row = farthest (red).
     slice_colors = [_depth_color(i / (n_slices - 1)) for i in range(n_slices)]
 
-    # Landscape layout: one ROW per axis (X/Y/Z), columns = [mesh] + N slices.
-    ncol = n_slices + (1 if have_mesh else 0)
+    # Landscape layout: one ROW per axis. Columns read blue -> red across:
+    # [front mesh (near/blue)] [slice1 .. sliceN] [back mesh (far/red)].
+    ncol = n_slices + (2 if have_mesh else 0)
     border = max(3, cell // 90)
     canvas = Image.new(
         "RGB",
@@ -256,13 +257,14 @@ def render_object(
             else np.linspace(-SPAN_FRAC, SPAN_FRAC, n_slices)
         )
         col0 = 0
+        back = None
         if have_mesh:
             direction, up = MESH_VIEW[axis]
             colors = _depth_colors(mesh, ax, s, center_xyz, extent_xyz)
             front_sign = "+" if direction[ax] > 0 else "-"
             back_sign = "-" if direction[ax] > 0 else "+"
             back_dir = tuple(-d for d in direction)
-            # Front (shows the near/blue side) and back (shows the far/red side).
+            # Front mesh (near/blue side) on the left, next to the blue slices.
             front = _bordered(
                 _mesh_view(
                     pv,
@@ -287,6 +289,8 @@ def render_object(
                 font=font,
             )
             canvas.paste(front, (SEP, y))
+            # Back mesh (far/red side) -- built now, pasted after the slices so the
+            # row reads continuously blue (front) -> ... -> red (back).
             back = _bordered(
                 _mesh_view(
                     pv,
@@ -305,8 +309,7 @@ def render_object(
             ImageDraw.Draw(back).text(
                 (8, 6), f"{back_sign}{label}", fill=color, font=font
             )
-            canvas.paste(back, (SEP + (cell + SEP), y))
-            col0 = 2
+            col0 = 1
 
         for i, frac in enumerate(fracs):
             pos = center_xyz[ax] + ext_nm * frac
@@ -332,6 +335,10 @@ def render_object(
                 )
             x = SEP + (col0 + i) * (cell + SEP)
             canvas.paste(sec, (x, y))
+
+        if back is not None:
+            xb = SEP + (col0 + n_slices) * (cell + SEP)
+            canvas.paste(back, (xb, y))
     return canvas
 
 
