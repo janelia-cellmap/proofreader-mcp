@@ -56,8 +56,8 @@ MESH_VIEW = {
     2: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),  # along Z
 }
 OVERLAY_RGB = (235, 90, 90)
-OVERLAY_ALPHA = 0.20  # light tint so the EM underneath stays readable
-MESH_OPACITY = 0.4
+OVERLAY_ALPHA = 0.10  # very light tint so the EM underneath stays clearly readable
+MESH_OPACITY = 1.0
 SEP = 6
 SEP_COLOR = (30, 30, 30)
 
@@ -138,7 +138,14 @@ def _mesh_view(pv, mesh, axis_zyx, center_xyz, extent_xyz, cell):
     in_plane = [extent_xyz[i] for i in range(3) if i != axis_xyz]
     pl = pv.Plotter(off_screen=True, window_size=(cell, cell))
     pl.set_background("white")
-    pl.add_mesh(mesh, color="lightgray", opacity=MESH_OPACITY, smooth_shading=True)
+    # Match the mesh-montage look: lightgray, smooth shading, a little specular.
+    pl.add_mesh(
+        mesh,
+        color="lightgray",
+        opacity=MESH_OPACITY,
+        smooth_shading=True,
+        specular=0.3,
+    )
     dist = max(extent_xyz) * 3 + max(extent_xyz)
     pos = [center_xyz[j] + direction[j] * dist for j in range(3)]
     pl.camera_position = [tuple(pos), tuple(center_xyz), up]
@@ -235,7 +242,9 @@ def main(argv: list[str] | None = None) -> int:
         "--seg", required=True, type=Path, help="OME-Zarr segmentation group"
     )
     p.add_argument("--mesh-source", default=None, help="mesh source for the top row")
-    p.add_argument("--mesh-lod", type=int, default=2, help="LOD for the mesh views")
+    p.add_argument(
+        "--mesh-lod", type=int, default=0, help="LOD for the mesh views (0=finest)"
+    )
     p.add_argument(
         "--ids", default=None, help="comma-separated ids (overrides --labels)"
     )
