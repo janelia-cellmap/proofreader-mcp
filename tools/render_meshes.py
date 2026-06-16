@@ -124,7 +124,7 @@ def _render_one(
     # Font sizes scale with the panel so labels stay large and legible while still
     # fitting the full "x_extent = NNNN nm" string within one panel's width.
     axis_font = max(14, cell_size // 20)
-    extent_font = max(16, cell_size // 19)
+    extent_font = max(13, cell_size // 28)
 
     for i, (label, direction, up, axis) in enumerate(VIEWS):
         plotter.subplot(i // GRID_COLS, i % GRID_COLS)
