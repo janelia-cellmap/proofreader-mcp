@@ -108,7 +108,7 @@ def _render_one(
     color: str,
     background: str,
     parallel_scale: float | None,
-) -> tuple[float, float, float]:
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
     plotter = pv.Plotter(
         off_screen=True,
         shape=(GRID_ROWS, GRID_COLS),
@@ -158,7 +158,7 @@ def _render_one(
 
     plotter.screenshot(str(out_path))
     plotter.close()
-    return extents
+    return extents, (float(center[0]), float(center[1]), float(center[2]))
 
 
 def _select_ids(
@@ -197,9 +197,9 @@ def _worker_bounds(oid: str) -> tuple[str, tuple[float, float, float]]:
     return oid, _extents_nm(_WORKER["source"].get(oid))
 
 
-def _worker_render(task: tuple) -> tuple[str, tuple[float, float, float]]:
+def _worker_render(task: tuple):
     oid, out_dir, cell_size, color, background, parallel_scale = task
-    ext = _render_one(
+    ext, center = _render_one(
         _WORKER["pv"],
         _WORKER["source"].get(oid),
         Path(out_dir) / f"{oid}.png",
@@ -208,7 +208,7 @@ def _worker_render(task: tuple) -> tuple[str, tuple[float, float, float]]:
         background=background,
         parallel_scale=parallel_scale,
     )
-    return oid, ext
+    return oid, ext, center
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -296,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     use_global = args.scale_mode == "global"
 
     extents: dict[str, tuple[float, float, float]] = {}
+    centers: dict[str, tuple[float, float, float]] = {}
     parallel_scale: float | None = None
 
     if workers == 1:
@@ -304,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
             if use_global:
                 parallel_scale = _global_half_extent(source, ids) * 1.1
             for oid in tqdm(ids, desc="rendering", unit="obj"):
-                extents[oid] = _render_one(
+                extents[oid], centers[oid] = _render_one(
                     pv,
                     source.get(oid),
                     args.output_dir / f"{oid}.png",
@@ -343,19 +344,23 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 for oid in ids
             ]
-            for oid, ext in tqdm(
+            for oid, ext, ctr in tqdm(
                 ex.map(_worker_render, tasks),
                 total=len(ids),
                 desc="rendering",
                 unit="obj",
             ):
                 extents[oid] = ext
+                centers[oid] = ctr
 
     objects = [
         {
             "object_id": oid,
             "image": f"{oid}.png",
-            "meta": {"extent_nm": [round(v, 1) for v in extents[oid]]},
+            "meta": {
+                "extent_nm": [round(v, 1) for v in extents[oid]],
+                "centroid_nm": [round(v, 1) for v in centers[oid]],
+            },
         }
         for oid in ids
     ]

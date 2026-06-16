@@ -103,9 +103,18 @@ PAGE_TEMPLATE = """<!doctype html>
 __DATA__
 let sortKey = "expected_cost", sortDir = -1;
 
-function ngLink(id) {
-  if (!NG_SOURCE) return "";
-  const state = {layers:[{type:"segmentation",source:NG_SOURCE,segments:[String(id)],name:NG_NAME}],layout:"3d"};
+function ngLink(d) {
+  const layers = [];
+  if (RAW_SOURCE) layers.push({type:"image", source:RAW_SOURCE, name:"em"});
+  const seg = SEG_SOURCE || NG_SOURCE;
+  if (seg) layers.push({type:"segmentation", source:seg, segments:[String(d.object_id)], name:NG_NAME});
+  if (!layers.length) return "";
+  const state = {
+    dimensions:{x:[1e-9,"m"],y:[1e-9,"m"],z:[1e-9,"m"]},
+    layers, layout:"4panel",
+    selectedLayer:{visible:true, layer:NG_NAME}
+  };
+  if (d.cx != null) state.position = [d.cx, d.cy, d.cz];
   return NG_BASE + "#!" + encodeURIComponent(JSON.stringify(state));
 }
 function lblPill(l){ return '<span class="pill lbl-'+l+'">'+l+'</span>'; }
@@ -143,7 +152,7 @@ function render() {
   const rows = visibleRows();
   document.getElementById("count").textContent = rows.length+" shown";
   const body = rows.map(d => {
-    const ng = ngLink(d.object_id);
+    const ng = ngLink(d);
     return '<tr>'+
       '<td><a href="'+d.image+'" target="_blank"><img class="thumb" loading="lazy" src="'+d.image+'"></a></td>'+
       '<td>'+d.object_id+'</td>'+
@@ -191,10 +200,13 @@ def build_records(collection_dir: Path) -> list[dict]:
     records = []
     for it in ranked:
         obj = col.objects[it.object_id]
-        ext = (obj.meta or {}).get("extent_nm") or [None, None, None]
+        meta = obj.meta or {}
+        ext = (meta.get("extent_nm") or []) + [None, None, None]
+        ctr = (meta.get("centroid_nm") or []) + [None, None, None]
         d = it.to_dict()
         d["image"] = obj.image
-        d["ext_x"], d["ext_y"], d["ext_z"] = (ext + [None, None, None])[:3]
+        d["ext_x"], d["ext_y"], d["ext_z"] = ext[:3]
+        d["cx"], d["cy"], d["cz"] = ctr[:3]
         records.append(d)
     return records
 
@@ -209,17 +221,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--title", default=None, help="page title")
     parser.add_argument(
+        "--raw-source",
+        default="",
+        help="Neuroglancer image-layer source for the raw EM, e.g. "
+        "'https://host/.../em/fibsem-uint8/|zarr2:'",
+    )
+    parser.add_argument(
+        "--seg-source",
+        default="",
+        help="Neuroglancer segmentation-layer source (voxel seg), e.g. "
+        "'https://host/.../mito/|zarr2:'. Each row's link selects that object's id.",
+    )
+    parser.add_argument(
         "--neuroglancer-source",
         default="",
-        help="precomputed source for the segmentation/mesh layer, e.g. "
-        "precomputed://file:///nrs/.../multires or a served gs://, https:// URL",
+        help="fallback segmentation source if --seg-source is not given (e.g. the "
+        "precomputed mesh layer)",
     )
     parser.add_argument(
         "--neuroglancer-base",
         default="https://neuroglancer-demo.appspot.com/",
         help="Neuroglancer host to build links against",
     )
-    parser.add_argument("--neuroglancer-name", default="mito", help="NG layer name")
+    parser.add_argument("--neuroglancer-name", default="mito", help="NG seg layer name")
     args = parser.parse_args(argv)
 
     records = build_records(args.collection_dir)
@@ -234,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     data_js = (
         "const DATA = " + json.dumps(records) + ";\n"
         "const NG_BASE = " + json.dumps(args.neuroglancer_base) + ";\n"
+        "const RAW_SOURCE = " + json.dumps(args.raw_source) + ";\n"
+        "const SEG_SOURCE = " + json.dumps(args.seg_source) + ";\n"
         "const NG_SOURCE = " + json.dumps(args.neuroglancer_source) + ";\n"
         "const NG_NAME = " + json.dumps(args.neuroglancer_name) + ";"
     )
