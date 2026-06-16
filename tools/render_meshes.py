@@ -146,9 +146,15 @@ def _render_one(
             # Shared scale: set last, as orientation changes can reset it.
             plotter.camera.parallel_scale = parallel_scale
         else:
-            # Per-object: fit this object to the panel, then zoom in to fill it.
-            plotter.reset_camera()
-            plotter.camera.zoom(1.4)
+            # Per-object: fit this view's in-plane extents (the two axes that are
+            # NOT the viewing axis) so the object fills the square panel without
+            # clipping. parallel_scale is half the panel's world height.
+            up_axis = max(range(3), key=lambda k: abs(up[k]))
+            view_axis = max(range(3), key=lambda k: abs(direction[k]))
+            horiz_axis = 3 - up_axis - view_axis
+            plotter.camera.parallel_scale = (
+                max(extents[up_axis], extents[horiz_axis]) / 2.0 * 1.1
+            )
 
     plotter.screenshot(str(out_path))
     plotter.close()
