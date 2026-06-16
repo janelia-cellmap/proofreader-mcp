@@ -211,13 +211,17 @@ def render_object(
 
     for col, (label, axis, color) in enumerate(PLANES):
         x = SEP + col * (cell + SEP)
+        # Label with this axis's object extent in nm for an absolute sense of scale
+        # (all panels share one nm/pixel, so these are directly comparable).
+        ext_nm = extent_xyz[2 - axis]
+        text = f"{label}  {ext_nm:.0f} nm"
         if have_mesh:
             mv = _bordered(
                 _mesh_view(pv, mesh, axis, center_xyz, extent_xyz, cell, fov_half),
                 color,
                 border,
             )
-            ImageDraw.Draw(mv).text((8, 6), label, fill=color, font=font)
+            ImageDraw.Draw(mv).text((8, 6), text, fill=color, font=font)
             canvas.paste(mv, (x, SEP))
         sec = _bordered(
             _section_panel(raw_crop, seg_crop, axis, obj_id, cell, lo, hi),
@@ -225,7 +229,7 @@ def render_object(
             border,
         )
         if not have_mesh:
-            ImageDraw.Draw(sec).text((8, 6), label, fill=color, font=font)
+            ImageDraw.Draw(sec).text((8, 6), text, fill=color, font=font)
         canvas.paste(sec, (x, SEP + (rows - 1) * (cell + SEP)))
     return canvas
 
