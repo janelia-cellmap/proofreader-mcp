@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 import zarr
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from proofreader_mcp.storage import Store
 
@@ -139,7 +139,7 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
 
 
 def _section_at(
-    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint, mask_mode
+    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint, mask_mode, pad_px
 ):
     """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
 
@@ -147,6 +147,7 @@ def _section_at(
     matches the axis-aligned mesh view above it. ``mask_mode`` controls how the
     object is shown: 'off' = translucent ``tint`` overlay; 'object' = keep raw only
     inside the segmentation (white outside); 'dim' = darken everything outside.
+    ``pad_px`` dilates the kept region to leave a ring of surrounding EM context.
     """
     ri = min(max(ri, 0), raw_crop.shape[axis] - 1)
     si = min(max(si, 0), seg_crop.shape[axis] - 1)
@@ -158,14 +159,12 @@ def _section_at(
     base = np.asarray(
         Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     )
-    mask = (
-        np.asarray(
-            Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
-                (cell, cell), Image.NEAREST
-            )
-        )
-        > 127
+    mask_img = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
+        (cell, cell), Image.NEAREST
     )
+    if pad_px > 0:
+        mask_img = mask_img.filter(ImageFilter.MaxFilter(2 * pad_px + 1))
+    mask = np.asarray(mask_img) > 127
     if mask_mode == "object":
         out = np.full_like(base, 255)
         out[mask] = base[mask]
@@ -231,6 +230,7 @@ def render_object(
     n_slices,
     seg_color_mode,
     mask_mode,
+    mask_pad_nm,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -239,6 +239,8 @@ def render_object(
     # views -- share one nm/pixel scale, regardless of the object's aspect ratio.
     fov_half = max(extent_xyz) / 2 * margin
     half_zyx = [fov_half, fov_half, fov_half]
+    nm_per_px = (2 * fov_half) / cell
+    pad_px = int(round(mask_pad_nm / nm_per_px)) if nm_per_px else 0
 
     rb = _crop_box(center_zyx, half_zyx, rscale, rtrans, raw.shape)
     sb = _crop_box(center_zyx, half_zyx, sscale, strans, seg.shape)
@@ -353,6 +355,7 @@ def render_object(
                     hi,
                     tint,
                     mask_mode,
+                    pad_px,
                 ),
                 slice_colors[i],
                 border,
@@ -439,6 +442,13 @@ def main(argv: list[str] | None = None) -> int:
         "outside) so the object is isolated; 'dim' = darken everything outside; "
         "'off' = translucent seg overlay over the full EM (keeps neighbor context)",
     )
+    p.add_argument(
+        "--mask-pad",
+        type=float,
+        default=0.0,
+        help="nm of surrounding EM to keep around the object for object/dim masks "
+        "(a context halo); 0 = tight mask",
+    )
     args = p.parse_args(argv)
 
     lo, hi = (float(x) for x in args.contrast.split(","))
@@ -498,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.slices,
                 args.seg_color,
                 args.mask,
+                args.mask_pad,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")
