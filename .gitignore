@@ -70,3 +70,7 @@ dmypy.json
 
 # OS / editor cruft
 .DS_Store
+
+# Local MCP client configs
+.gemini/
+.mcp.json
