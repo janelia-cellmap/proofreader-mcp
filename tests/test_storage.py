@@ -25,6 +25,25 @@ def test_load_collection_from_sidecar(collection_dir: Path):
     assert report.source == "sidecar"
 
 
+def test_image_legend_from_sidecar(tmp_path: Path):
+    (tmp_path / "1.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    sidecar = {
+        "collection_id": "c",
+        "image_legend": "row per axis; mesh + EM sections",
+        "objects": [{"object_id": "1", "image": "1.png"}],
+    }
+    (tmp_path / "objects.json").write_text(json.dumps(sidecar))
+    store = Store()
+    store.load_collection(tmp_path)
+    assert store.get("c").image_legend == "row per axis; mesh + EM sections"
+
+
+def test_image_legend_absent_is_none(collection_dir: Path):
+    store = Store()
+    store.load_collection(collection_dir)
+    assert store.get("test_collection").image_legend is None
+
+
 def test_load_collection_by_scan(scan_dir: Path):
     store = Store()
     report = store.load_collection(scan_dir)

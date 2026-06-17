@@ -64,6 +64,7 @@ class Collection:
     path: Path
     organelle_type: str | None
     objects: dict[str, ObjectRecord]
+    image_legend: str | None = None
     verdicts: dict[str, Verdict] = field(default_factory=dict)
     reviews: dict[str, Review] = field(default_factory=dict)
 
@@ -117,9 +118,11 @@ class Store:
             raise CollectionError(f"not a directory: {directory}")
 
         sidecar = _read_sidecar(directory)
+        image_legend = None
         if sidecar is not None:
             collection_id = str(sidecar.get("collection_id") or directory.name)
             organelle_type = sidecar.get("organelle_type")
+            image_legend = sidecar.get("image_legend")
             objects: dict[str, ObjectRecord] = {}
             for entry in sidecar.get("objects") or []:
                 rec = ObjectRecord.from_dict(
@@ -160,6 +163,7 @@ class Store:
             path=directory,
             organelle_type=organelle_type,
             objects=objects,
+            image_legend=image_legend,
             verdicts=verdicts,
             reviews=reviews,
         )

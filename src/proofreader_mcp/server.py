@@ -42,6 +42,7 @@ def collection_resource(collection_id: str) -> str:
         {
             "collection_id": col.collection_id,
             "organelle_type": col.organelle_type,
+            "image_legend": col.image_legend,
             "rubric": store.rubric(collection_id),
             "total": listing["total"],
             "objects": listing["objects"],
@@ -103,6 +104,18 @@ def get_rubric(collection_id: str) -> dict[str, Any]:
         "organelle_type": col.organelle_type,
         "rubric": store.rubric(collection_id),
     }
+
+
+@mcp.tool()
+def get_image_legend(collection_id: str) -> dict[str, Any]:
+    """Describe how to read each object's composite image (panel layout).
+
+    Returns the collection's ``image_legend`` if the upstream renderer recorded one
+    (e.g. the mesh + raw-EM slice montage layout); otherwise null. Fetch this before
+    classifying so visual judgments are grounded in the actual panel meaning.
+    """
+    col = store.get(collection_id)
+    return {"collection_id": collection_id, "image_legend": col.image_legend}
 
 
 @mcp.tool()

@@ -69,6 +69,23 @@ SEP_COLOR = (30, 30, 30)
 SPAN_FRAC = 0.45  # slices span centroid +/- SPAN_FRAC * extent along the axis
 VIEW_PAD = 1.1  # --fit view: window = in-plane extent * this (tight fill, not margin)
 
+# Description of the montage layout, written into the collection sidecar so an MCP
+# host knows how to read each object image when classifying.
+LAYOUT_LEGEND = (
+    "Each object image is a 3-row montage, one row per axis (top=X, mid=Y, bot=Z). "
+    "Reading each row left to right: (1) a 3D mesh of the object viewed down the "
+    "+axis (front/near side); (2) N raw-EM cross-sections stepping through the "
+    "object from near to far along that axis; (3) the same mesh from the -axis "
+    "(back/far side, mirrored so it lines up with the sections). The mesh surface is "
+    "colored by depth along the axis (blue=near -> red=far) and each section's "
+    "colored border matches where it sits in that gradient. In each section the raw "
+    "EM is grayscale (fixed contrast), the object's own voxels are faintly tinted, a "
+    "thin ring of surrounding EM (halo) gives context, and everything beyond is "
+    "white. Each mesh panel is labeled with the object's extent along that axis in "
+    "nm. Use the mesh for overall shape (overmerge/oversegment) and the EM sections "
+    "to judge whether the object is a real, correctly-classified organelle."
+)
+
 
 def _depth_color(t: float) -> tuple[int, int, int]:
     """Map normalized depth t in [0, 1] to an RGB color (blue near -> red far)."""
@@ -222,19 +239,23 @@ def _section_at(
         Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     )
     seg_native = Image.fromarray((seg2d * 255).astype(np.uint8))
+    obj_mask = np.asarray(seg_native.resize((cell, cell), Image.NEAREST)) > 127
+    halo = seg_native
     if pad_vox > 0:
         # Dilate at the segmentation's native resolution: the kernel is a constant
         # ~pad_vox voxels regardless of object size / panel size (cheap).
-        seg_native = seg_native.filter(ImageFilter.MaxFilter(2 * pad_vox + 1))
-    mask = np.asarray(seg_native.resize((cell, cell), Image.NEAREST)) > 127
+        halo = seg_native.filter(ImageFilter.MaxFilter(2 * pad_vox + 1))
+    halo_mask = np.asarray(halo.resize((cell, cell), Image.NEAREST)) > 127
     if mask_mode == "object":
         out = np.full_like(base, 255)
-        out[mask] = base[mask]
+        out[halo_mask] = base[halo_mask]
     elif mask_mode == "dim":
         out = (base.astype(np.float32) * 0.3).astype(np.uint8)
-        out[mask] = base[mask]
-    else:  # "off": translucent overlay
-        out = _overlay(base, mask, tint)
+        out[halo_mask] = base[halo_mask]
+    else:  # "off": full EM
+        out = base.copy()
+    # Faint tint on the TRUE object voxels so it reads against the EM context/halo.
+    out = _overlay(out, obj_mask, tint)
     return Image.fromarray(out)
 
 
@@ -570,6 +591,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     done = 0
+    written: list[dict] = []
     try:
         for oid in ids:
             meta = col.objects[oid].meta or {}
@@ -607,11 +629,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  skip {oid}: empty crop")
                 continue
             grid.save(args.output_dir / f"{oid}.png")
+            written.append({"object_id": oid, "image": f"{oid}.png", "meta": meta})
             done += 1
     finally:
         if mesh_source is not None:
             mesh_source.close()
-    print(f"wrote {done} montages -> {args.output_dir}")
+
+    # Write a self-describing collection sidecar so an MCP host can load this dir
+    # directly: it serves these montages as the object images and carries a legend.
+    sidecar = {
+        "collection_id": cid,
+        "organelle_type": col.organelle_type,
+        "image_legend": LAYOUT_LEGEND,
+        "objects": written,
+    }
+    (args.output_dir / "objects.json").write_text(json.dumps(sidecar, indent=2))
+    print(f"wrote {done} montages + objects.json -> {args.output_dir}")
     return 0
 
 
