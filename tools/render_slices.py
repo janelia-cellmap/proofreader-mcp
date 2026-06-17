@@ -231,6 +231,7 @@ def render_object(
     seg_color_mode,
     mask_mode,
     mask_pad_nm,
+    contrast_auto,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -252,6 +253,18 @@ def render_object(
     )
     if raw_crop.size == 0:
         return None
+
+    if contrast_auto:
+        # Per-object window from the object's own raw voxels (nearest-resample the
+        # seg mask onto the raw grid), applied to all slices -- stretches internal
+        # texture while staying consistent within the object.
+        idx = [
+            (np.arange(raw_crop.shape[a]) * seg_crop.shape[a] // raw_crop.shape[a])
+            for a in range(3)
+        ]
+        obj_vox = raw_crop[seg_crop[np.ix_(*idx)] == int(obj_id)]
+        if obj_vox.size >= 16:
+            lo, hi = (float(v) for v in np.percentile(obj_vox, [2, 98]))
 
     fsize = max(14, cell // 22)
     font = _font(fsize)
@@ -417,7 +430,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--contrast",
         default="84,152",
-        help="fixed raw-EM intensity window lo,hi (uint8) applied to every slice",
+        help="fixed raw-EM intensity window 'lo,hi' (uint8) applied to every slice, "
+        "or 'auto' for a per-object window from the object's own voxels",
     )
     p.add_argument(
         "--seg-color",
@@ -443,7 +457,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
 
-    lo, hi = (float(x) for x in args.contrast.split(","))
+    contrast_auto = args.contrast.strip().lower() == "auto"
+    lo, hi = (
+        (0.0, 255.0) if contrast_auto else (float(x) for x in args.contrast.split(","))
+    )
 
     store = Store()
     rep = store.load_collection(args.collection_dir)
@@ -501,6 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.seg_color,
                 args.mask,
                 args.mask_pad,
+                contrast_auto,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")
