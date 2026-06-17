@@ -64,7 +64,7 @@ SECTION_HFLIP = {1}  # Y: +Y view has screen-right = -X, so mirror the section
 OVERLAY_RGB = (235, 90, 90)
 OVERLAY_ALPHA = 0.10  # very light tint so the EM underneath stays clearly readable
 MESH_OPACITY = 1.0
-SEP = 6
+SEP = 2
 SEP_COLOR = (30, 30, 30)
 SPAN_FRAC = 0.45  # slices span centroid +/- SPAN_FRAC * extent along the axis
 VIEW_PAD = 1.1  # --fit view: window = in-plane extent * this (tight fill, not margin)
@@ -149,18 +149,19 @@ def _center_crop(arr, frac):
     return arr[r0 : r0 + ch, c0 : c0 + cw]
 
 
-def _bbox_crop(raw2d, seg2d, pad_vox):
-    """Crop both arrays to this slice's object bounding box (square, padded).
+def _bbox_crop(raw2d, seg2d):
+    """Crop both arrays to this slice's object bounding box (square, small pad).
 
     Used by --fit panel so each section is zoomed to its own cross-section. The box
     is computed in fractions of the (square, cubic) read window, so the same box
-    applies to raw and seg despite their different voxel sizes.
+    applies to raw and seg despite their different voxel sizes. The pad is small and
+    fixed; the mask halo (--mask-pad) fills it with surrounding EM rather than white.
     """
     ys, xs = np.where(seg2d)
     if ys.size == 0:
         return raw2d, seg2d
     h, w = seg2d.shape
-    padf = pad_vox / max(h, 1) + 0.03
+    padf = 0.05
     t = max(0.0, ys.min() / h - padf)
     b = min(1.0, (ys.max() + 1) / h + padf)
     left = max(0.0, xs.min() / w - padf)
@@ -213,7 +214,7 @@ def _section_at(
     if fit == "view":
         raw2d, seg2d = _center_crop(raw2d, fit_frac), _center_crop(seg2d, fit_frac)
     elif fit == "panel":
-        raw2d, seg2d = _bbox_crop(raw2d, seg2d, pad_vox)
+        raw2d, seg2d = _bbox_crop(raw2d, seg2d)
     if axis in SECTION_HFLIP:
         raw2d = np.fliplr(raw2d)
         seg2d = np.fliplr(seg2d)
@@ -531,9 +532,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--mask-pad",
         type=float,
-        default=0.0,
+        default=250.0,
         help="nm of surrounding EM to keep around the object for object/dim masks "
-        "(a context halo); 0 (default) = tight mask",
+        "(a context halo); fills the tight panel crop with EM rather than white. "
+        "0 = tight mask",
     )
     args = p.parse_args(argv)
 
