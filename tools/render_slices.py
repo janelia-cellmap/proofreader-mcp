@@ -67,6 +67,7 @@ MESH_OPACITY = 1.0
 SEP = 6
 SEP_COLOR = (30, 30, 30)
 SPAN_FRAC = 0.45  # slices span centroid +/- SPAN_FRAC * extent along the axis
+VIEW_PAD = 1.1  # --fit view: window = in-plane extent * this (tight fill, not margin)
 
 
 def _depth_color(t: float) -> tuple[int, int, int]:
@@ -148,6 +149,37 @@ def _center_crop(arr, frac):
     return arr[r0 : r0 + ch, c0 : c0 + cw]
 
 
+def _bbox_crop(raw2d, seg2d, pad_vox):
+    """Crop both arrays to this slice's object bounding box (square, padded).
+
+    Used by --fit panel so each section is zoomed to its own cross-section. The box
+    is computed in fractions of the (square, cubic) read window, so the same box
+    applies to raw and seg despite their different voxel sizes.
+    """
+    ys, xs = np.where(seg2d)
+    if ys.size == 0:
+        return raw2d, seg2d
+    h, w = seg2d.shape
+    padf = pad_vox / max(h, 1) + 0.08
+    t = max(0.0, ys.min() / h - padf)
+    b = min(1.0, (ys.max() + 1) / h + padf)
+    left = max(0.0, xs.min() / w - padf)
+    right = min(1.0, (xs.max() + 1) / w + padf)
+    side = min(1.0, max(b - t, right - left))
+    cy, cx = (t + b) / 2, (left + right) / 2
+    t = min(max(0.0, cy - side / 2), 1.0 - side)
+    left = min(max(0.0, cx - side / 2), 1.0 - side)
+    b, right = t + side, left + side
+
+    def crop(a):
+        ah, aw = a.shape[:2]
+        r0, r1 = int(t * ah), max(int(t * ah) + 1, int(b * ah))
+        c0, c1 = int(left * aw), max(int(left * aw) + 1, int(right * aw))
+        return a[r0:r1, c0:c1]
+
+    return crop(raw2d), crop(seg2d)
+
+
 def _section_at(
     raw_crop,
     seg_crop,
@@ -161,6 +193,7 @@ def _section_at(
     tint,
     mask_mode,
     pad_vox,
+    fit,
     fit_frac,
 ):
     """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
@@ -170,15 +203,17 @@ def _section_at(
     object is shown: 'off' = translucent ``tint`` overlay; 'object' = keep raw only
     inside the segmentation (white outside); 'dim' = darken everything outside.
     ``pad_vox`` dilates the kept region to leave a ring of surrounding EM context.
-    ``fit_frac`` < 1 center-crops the read window to that fraction before resizing,
-    so the object fills the panel (used by --fit view).
+    ``fit``: 'cube' no crop; 'view' center-crop to ``fit_frac`` (per-row scale);
+    'panel' crop to this slice's own object bbox (per-slice zoom).
     """
     ri = min(max(ri, 0), raw_crop.shape[axis] - 1)
     si = min(max(si, 0), seg_crop.shape[axis] - 1)
-    raw2d = _center_crop(np.flipud(np.take(raw_crop, ri, axis=axis)), fit_frac)
-    seg2d = _center_crop(
-        np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id), fit_frac
-    )
+    raw2d = np.flipud(np.take(raw_crop, ri, axis=axis))
+    seg2d = np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id)
+    if fit == "view":
+        raw2d, seg2d = _center_crop(raw2d, fit_frac), _center_crop(seg2d, fit_frac)
+    elif fit == "panel":
+        raw2d, seg2d = _bbox_crop(raw2d, seg2d, pad_vox)
     if axis in SECTION_HFLIP:
         raw2d = np.fliplr(raw2d)
         seg2d = np.fliplr(seg2d)
@@ -325,8 +360,12 @@ def render_object(
         # --fit view: shrink this row's window to its in-plane extent so the object
         # fills the panel (x/y/z scales then differ; sizes are still on the labels).
         inplane = [extent_xyz[i] for i in range(3) if i != ax]
+        # Mesh views fill to the in-plane extent for view/panel; sections then crop
+        # per-row (view) or per-slice (panel). cube keeps the shared cubic scale.
         disp_half = (
-            min(max(inplane) / 2 * margin, fov_half) if fit == "view" else fov_half
+            min(max(inplane) / 2 * VIEW_PAD, fov_half)
+            if fit in ("view", "panel")
+            else fov_half
         )
         fit_frac = disp_half / fov_half
         col0 = 0
@@ -395,6 +434,7 @@ def render_object(
                     tint,
                     mask_mode,
                     pad_vox,
+                    fit,
                     fit_frac,
                 ),
                 slice_colors[i],
@@ -464,11 +504,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--margin", type=float, default=1.5, help="crop padding factor")
     p.add_argument(
         "--fit",
-        choices=["cube", "view"],
-        default="view",
-        help="'view' (default): fit each axis view to its in-plane extent so the "
-        "object fills the panel (more detail, x/y/z scales differ -- read sizes from "
-        "the labels); 'cube': one shared scale per object (x/y/z comparable)",
+        choices=["cube", "view", "panel"],
+        default="panel",
+        help="'panel' (default): crop each section to its own cross-section (max "
+        "zoom; every panel independent). 'view': one scale per axis row. 'cube': one "
+        "shared scale per object. Sizes are always on the extent labels.",
     )
     p.add_argument(
         "--contrast",
