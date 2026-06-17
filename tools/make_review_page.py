@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from proofreader_mcp.ranking import rank
@@ -84,7 +85,7 @@ PAGE_TEMPLATE = """<!doctype html>
   th.sorted-desc::after { content: " \\2193"; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   tr:hover td { background: #f9fafb; }
-  img.thumb { height: 80px; border: 1px solid #d7dbe0; border-radius: 4px;
+  img.thumb { height: 110px; border: 1px solid #d7dbe0; border-radius: 4px;
               display: block; background: #fff; }
   .rationale { max-width: 420px; color: #3a3f45; }
   .flags { color: #8a5a00; font-size: 12px; }
@@ -268,6 +269,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--title", default=None, help="page title")
     parser.add_argument(
+        "--thumbnails",
+        type=Path,
+        default=None,
+        help="dir of {object_id}.png to use as row thumbnails (e.g. the slice "
+        "montages actually evaluated); default = the collection's own snapshots",
+    )
+    parser.add_argument(
         "--neuroglancer-base",
         default="https://neuroglancer-demo.appspot.com/",
         help="Neuroglancer host to build links against",
@@ -297,6 +305,15 @@ def main(argv: list[str] | None = None) -> int:
         args.title
         or f"proofreader review — {args.collection_dir.name} ({len(records)})"
     )
+
+    out = args.output or args.collection_dir / "review.html"
+    if args.thumbnails is not None:
+        # Point row thumbnails at an external dir of {object_id}.png (e.g. the slice
+        # montages we evaluated), via a path relative to the output html.
+        rel = os.path.relpath(args.thumbnails.resolve(), out.resolve().parent)
+        for d in records:
+            d["image"] = f"{rel}/{d['object_id']}.png"
+
     mesh_sources = [s for s in args.ng_mesh_sources.split(",") if s]
     position = [float(x) for x in args.ng_position.split(",")]
     data_js = (
@@ -309,8 +326,6 @@ def main(argv: list[str] | None = None) -> int:
         "const LABEL_COLORS = " + json.dumps(LABEL_COLORS) + ";"
     )
     html = PAGE_TEMPLATE.replace("__TITLE__", title).replace("__DATA__", data_js)
-
-    out = args.output or args.collection_dir / "review.html"
     out.write_text(html)
     print(f"wrote {out}  ({len(records)} objects)")
     return 0
