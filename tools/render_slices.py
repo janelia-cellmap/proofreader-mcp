@@ -139,7 +139,7 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
 
 
 def _section_at(
-    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint, mask_mode, pad_px
+    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint, mask_mode, pad_vox
 ):
     """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
 
@@ -159,12 +159,12 @@ def _section_at(
     base = np.asarray(
         Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     )
-    mask_img = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
-        (cell, cell), Image.NEAREST
-    )
-    if pad_px > 0:
-        mask_img = mask_img.filter(ImageFilter.MaxFilter(2 * pad_px + 1))
-    mask = np.asarray(mask_img) > 127
+    seg_native = Image.fromarray((seg2d * 255).astype(np.uint8))
+    if pad_vox > 0:
+        # Dilate at the segmentation's native resolution: the kernel is a constant
+        # ~pad_vox voxels regardless of object size / panel size (cheap).
+        seg_native = seg_native.filter(ImageFilter.MaxFilter(2 * pad_vox + 1))
+    mask = np.asarray(seg_native.resize((cell, cell), Image.NEAREST)) > 127
     if mask_mode == "object":
         out = np.full_like(base, 255)
         out[mask] = base[mask]
@@ -239,8 +239,8 @@ def render_object(
     # views -- share one nm/pixel scale, regardless of the object's aspect ratio.
     fov_half = max(extent_xyz) / 2 * margin
     half_zyx = [fov_half, fov_half, fov_half]
-    nm_per_px = (2 * fov_half) / cell
-    pad_px = int(round(mask_pad_nm / nm_per_px)) if nm_per_px else 0
+    seg_vox_nm = min(sscale)  # isotropic seg voxel size; dilate in voxels
+    pad_vox = int(round(mask_pad_nm / seg_vox_nm)) if mask_pad_nm else 0
 
     rb = _crop_box(center_zyx, half_zyx, rscale, rtrans, raw.shape)
     sb = _crop_box(center_zyx, half_zyx, sscale, strans, seg.shape)
@@ -355,7 +355,7 @@ def render_object(
                     hi,
                     tint,
                     mask_mode,
-                    pad_px,
+                    pad_vox,
                 ),
                 slice_colors[i],
                 border,
