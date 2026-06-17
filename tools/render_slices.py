@@ -138,8 +138,30 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
     return img
 
 
+def _center_crop(arr, frac):
+    """Keep the central ``frac`` of a 2D array (centered on the object centroid)."""
+    if frac >= 1.0:
+        return arr
+    h, w = arr.shape[:2]
+    ch, cw = max(1, int(round(h * frac))), max(1, int(round(w * frac)))
+    r0, c0 = (h - ch) // 2, (w - cw) // 2
+    return arr[r0 : r0 + ch, c0 : c0 + cw]
+
+
 def _section_at(
-    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint, mask_mode, pad_vox
+    raw_crop,
+    seg_crop,
+    axis,
+    ri,
+    si,
+    obj_id,
+    cell,
+    lo,
+    hi,
+    tint,
+    mask_mode,
+    pad_vox,
+    fit_frac,
 ):
     """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
 
@@ -147,12 +169,16 @@ def _section_at(
     matches the axis-aligned mesh view above it. ``mask_mode`` controls how the
     object is shown: 'off' = translucent ``tint`` overlay; 'object' = keep raw only
     inside the segmentation (white outside); 'dim' = darken everything outside.
-    ``pad_px`` dilates the kept region to leave a ring of surrounding EM context.
+    ``pad_vox`` dilates the kept region to leave a ring of surrounding EM context.
+    ``fit_frac`` < 1 center-crops the read window to that fraction before resizing,
+    so the object fills the panel (used by --fit view).
     """
     ri = min(max(ri, 0), raw_crop.shape[axis] - 1)
     si = min(max(si, 0), seg_crop.shape[axis] - 1)
-    raw2d = np.flipud(np.take(raw_crop, ri, axis=axis))
-    seg2d = np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id)
+    raw2d = _center_crop(np.flipud(np.take(raw_crop, ri, axis=axis)), fit_frac)
+    seg2d = _center_crop(
+        np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id), fit_frac
+    )
     if axis in SECTION_HFLIP:
         raw2d = np.fliplr(raw2d)
         seg2d = np.fliplr(seg2d)
@@ -232,6 +258,7 @@ def render_object(
     mask_mode,
     mask_pad_nm,
     contrast_auto,
+    fit,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -295,6 +322,13 @@ def render_object(
             if s > 0
             else np.linspace(-SPAN_FRAC, SPAN_FRAC, n_slices)
         )
+        # --fit view: shrink this row's window to its in-plane extent so the object
+        # fills the panel (x/y/z scales then differ; sizes are still on the labels).
+        inplane = [extent_xyz[i] for i in range(3) if i != ax]
+        disp_half = (
+            min(max(inplane) / 2 * margin, fov_half) if fit == "view" else fov_half
+        )
+        fit_frac = disp_half / fov_half
         col0 = 0
         back = None
         if have_mesh:
@@ -313,7 +347,7 @@ def render_object(
                     center_xyz,
                     extent_xyz,
                     cell,
-                    fov_half,
+                    disp_half,
                     colors,
                 ),
                 color,
@@ -334,7 +368,7 @@ def render_object(
             # slices (and the front view): the 180-deg back camera flips handedness,
             # so flipping it back makes object positions line up across the row.
             back_img = _mesh_view(
-                pv, mesh, back_dir, up, center_xyz, extent_xyz, cell, fov_half, colors
+                pv, mesh, back_dir, up, center_xyz, extent_xyz, cell, disp_half, colors
             ).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             back = _bordered(back_img, color, border)
             ImageDraw.Draw(back).text(
@@ -361,6 +395,7 @@ def render_object(
                     tint,
                     mask_mode,
                     pad_vox,
+                    fit_frac,
                 ),
                 slice_colors[i],
                 border,
@@ -427,6 +462,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--cell-size", type=int, default=420, help="pixels per panel")
     p.add_argument("--margin", type=float, default=1.5, help="crop padding factor")
+    p.add_argument(
+        "--fit",
+        choices=["cube", "view"],
+        default="cube",
+        help="'cube' (default): one shared scale per object (x/y/z comparable); "
+        "'view': fit each axis view to its in-plane extent so the object fills the "
+        "panel (more detail, but x/y/z scales differ -- read sizes from the labels)",
+    )
     p.add_argument(
         "--contrast",
         default="84,152",
@@ -519,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.mask,
                 args.mask_pad,
                 contrast_auto,
+                args.fit,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")
