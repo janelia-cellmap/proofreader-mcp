@@ -6,9 +6,9 @@ EM and the voxel segmentation (OME-Zarr) around the object's mesh-derived centro
 and renders, per axis ROW (X/Y/Z), a front + back mesh view plus N sections
 stepping through the object along that axis (near -> far, left -> right):
 
-    X | [+X front] [-X back] [slice1 blue] ... [center] ... [sliceN red]
-    Y | [-Y front] [+Y back] [slice1 blue] ... [center] ... [sliceN red]
-    Z | [+Z front] [-Z back] [slice1 blue] ... [center] ... [sliceN red]
+    X | [+X front] [slice1 blue] ... [center] ... [sliceN red] [-X back]
+    Y | [+Y front] [slice1 blue] ... [center] ... [sliceN red] [-Y back]
+    Z | [+Z front] [slice1 blue] ... [center] ... [sliceN red] [-Z back]
 
 The mesh is colored by position along the axis (blue near -> red far); the front
 view shows the near/blue side and the back view (camera flipped 180 deg) shows the
@@ -52,14 +52,15 @@ PLANES = [
     ("Y", 1, (40, 175, 70)),
     ("Z", 0, (70, 120, 225)),
 ]
-# Mesh camera per section axis (z,y,x index): (view direction, up) in x,y,z. Chosen
-# so the mesh's screen axes match the (flipud'd) section: X->+X, Y->-Y, Z->+Z, all
-# with the section's horizontal/vertical world axes lined up.
+# Front mesh camera per section axis (z,y,x index): (view direction, up) in x,y,z.
+# All fronts look down the +axis so the left ("front") panel is always +X/+Y/+Z.
 MESH_VIEW = {
-    2: ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # X section: view down +X, up +Z
-    1: ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),  # Y section: view down -Y, up +Z
-    0: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),  # Z section: view down +Z, up +Y
+    2: ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # X: view down +X, up +Z
+    1: ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),  # Y: view down +Y, up +Z
+    0: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),  # Z: view down +Z, up +Y
 }
+# Sections whose horizontal axis must be flipped to match the +axis mesh view.
+SECTION_HFLIP = {1}  # Y: +Y view has screen-right = -X, so mirror the section
 OVERLAY_RGB = (235, 90, 90)
 OVERLAY_ALPHA = 0.10  # very light tint so the EM underneath stays clearly readable
 MESH_OPACITY = 1.0
@@ -151,6 +152,9 @@ def _section_at(
     si = min(max(si, 0), seg_crop.shape[axis] - 1)
     raw2d = np.flipud(np.take(raw_crop, ri, axis=axis))
     seg2d = np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id)
+    if axis in SECTION_HFLIP:
+        raw2d = np.fliplr(raw2d)
+        seg2d = np.fliplr(seg2d)
     base = np.asarray(
         Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     )

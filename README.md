@@ -180,9 +180,9 @@ mesh view plus `--slices` N sections stepping through the object along that axis
 (near → far, left → right):
 
 ```
-X | [+X front] [-X back] [slice1 blue] ... [center] ... [sliceN red]
-Y | [-Y front] [+Y back] [slice1 blue] ... [center] ... [sliceN red]
-Z | [+Z front] [-Z back] [slice1 blue] ... [center] ... [sliceN red]
+X | [+X front] [slice1 blue] ... [center] ... [sliceN red] [-X back]
+Y | [+Y front] [slice1 blue] ... [center] ... [sliceN red] [-Y back]
+Z | [+Z front] [slice1 blue] ... [center] ... [sliceN red] [-Z back]
 ```
 
 The mesh is **colored by distance from the front camera** along the axis (blue nearest → red
