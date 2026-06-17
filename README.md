@@ -108,8 +108,14 @@ uv run pytest          # run the test suite
 (Plain pip also works, since `pyproject.toml` is standard PEP 621:
 `pip install -e ".[dev]"` then `proofreader-mcp`.)
 
-Register with an MCP host (e.g. Claude Desktop / Claude Code) — point it at the uv-managed
-entry point:
+Register with Claude Code:
+
+```bash
+claude mcp add proofreader -- \
+  uv run --directory /path/to/proofreader-mcp proofreader-mcp
+```
+
+or with another MCP host (e.g. Claude Desktop) via JSON:
 
 ```json
 {
@@ -121,6 +127,23 @@ entry point:
   }
 }
 ```
+
+A typical session: `load_collection <dir>` → `get_image_legend` + `get_rubric` (so the host
+knows how to read each montage and what counts as an error) → fetch
+`object://<collection>/<id>` images → `classify_object` → `rank_objects` / `export_queue`.
+
+### Archiving evaluation runs
+
+The MCP keeps one live verdict per object. To preserve a run (so different models, or
+re-runs over time, don't overwrite each other), snapshot it:
+
+```bash
+uv run python tools/export_run.py ignore/slices_all
+# -> ignore/runs/<model>/<YYYY-MM-DD_HHMMSS>/{verdicts.json, queue.csv, review.html}
+```
+
+The run directory is named by the evaluating model (from `model_version`) and a timestamp;
+its `review.html` points back at the collection's montage thumbnails.
 
 ## Generating the images (prototype renderer)
 
