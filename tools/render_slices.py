@@ -430,9 +430,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--mask",
         choices=["off", "object", "dim"],
-        default="off",
-        help="'off' = translucent seg overlay; 'object' = keep raw EM only inside "
-        "the segmentation (white outside); 'dim' = darken everything outside",
+        default="object",
+        help="'object' (default) = keep raw EM only inside the segmentation (white "
+        "outside) so the object is isolated; 'dim' = darken everything outside; "
+        "'off' = translucent seg overlay over the full EM (keeps neighbor context)",
     )
     args = p.parse_args(argv)
 
