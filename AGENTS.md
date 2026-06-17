@@ -33,6 +33,12 @@ the meshes (overmerge/oversegment) and **identity/validity** from the EM section
 
 ## Important
 
+- **View ONE object montage at a time, at full resolution.** Each `<id>.png` is already
+  a dense montage (2 meshes + ~5 EM sections per axis, 3 axes). Do **not** build contact
+  sheets / grids that combine many objects into one image — downsampling makes the EM and
+  mesh detail unreadable and your verdicts unreliable. Open each montage as-is (via
+  `get_object_image` or the PNG on disk) and classify it before moving on. You can still
+  process all objects; just don't shrink-and-stack them.
 - **Set `model_version` to your actual model** (e.g. `gemini-2.5-pro`, `gpt-5.5`,
   `claude-opus-4-8`). This labels the review-page rows and the archive directory.
 - **If your client can't display MCP image results, read the PNGs off disk** — they are
@@ -42,6 +48,11 @@ the meshes (overmerge/oversegment) and **identity/validity** from the EM section
   run is saved to `ignore/runs/<model>/<YYYY-MM-DD_HHMMSS>/` (verdicts.json + queue.csv +
   review.html). If the live state mixes models, the archive falls back to `mixed/`
   (or pass `--model NAME` to force the label).
+- **Do not run two agents against the same collection at once.** Each client runs its
+  own MCP process; both rewrite the whole `proofreader_state.json` (last-writer-wins, no
+  locking), so concurrent runs clobber each other's verdicts. Run sequentially, or give
+  each agent its own copy of the collection dir (`cp -r ignore/slices_all
+  ignore/slices_all_<agent>`) so they have separate state.
 
 ## Tools
 
