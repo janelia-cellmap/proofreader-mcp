@@ -437,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--mask-pad",
         type=float,
-        default=0.0,
+        default=250.0,
         help="nm of surrounding EM to keep around the object for object/dim masks "
         "(a context halo); 0 = tight mask",
     )

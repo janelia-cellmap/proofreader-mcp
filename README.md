@@ -195,7 +195,10 @@ EM **only inside the segmentation** (white elsewhere) — isolates the object so
 **junk / misclassified / "does it look like a mito"** without hunting through dense tissue;
 `off` overlays the segmentation as a translucent tint over the full EM crop — keeps neighbor
 context, best for spotting **overmerge / oversegment**; `dim` darkens everything outside the
-object instead of whiting it out (a middle ground). The crop is a
+object instead of whiting it out (a middle ground). `--mask-pad` (default 250 nm) keeps a
+ring of surrounding EM around the object — a context halo — so you can still see the
+boundary/neighbors while the object stays isolated; `--mask-pad 0` for a tight mask. The
+back (right) mesh view is mirrored so its left-right matches the slices and front view. The crop is a
 **cube** (same nm field of view in every axis), so all panels share **one nm/pixel scale** —
 an object looks smaller down its long axis and larger in the others. Each mesh panel is
 labeled `{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast
