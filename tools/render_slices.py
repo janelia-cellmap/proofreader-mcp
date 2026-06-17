@@ -317,21 +317,13 @@ def render_object(
             canvas.paste(front, (SEP, y))
             # Back mesh (far/red side) -- built now, pasted after the slices so the
             # row reads continuously blue (front) -> ... -> red (back).
-            back = _bordered(
-                _mesh_view(
-                    pv,
-                    mesh,
-                    back_dir,
-                    up,
-                    center_xyz,
-                    extent_xyz,
-                    cell,
-                    fov_half,
-                    colors,
-                ),
-                color,
-                border,
-            )
+            # Mirror the back view left-right so its horizontal axis matches the
+            # slices (and the front view): the 180-deg back camera flips handedness,
+            # so flipping it back makes object positions line up across the row.
+            back_img = _mesh_view(
+                pv, mesh, back_dir, up, center_xyz, extent_xyz, cell, fov_half, colors
+            ).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+            back = _bordered(back_img, color, border)
             ImageDraw.Draw(back).text(
                 (8, 6), f"{back_sign}{label}", fill=color, font=font
             )
