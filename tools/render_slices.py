@@ -160,7 +160,7 @@ def _bbox_crop(raw2d, seg2d, pad_vox):
     if ys.size == 0:
         return raw2d, seg2d
     h, w = seg2d.shape
-    padf = pad_vox / max(h, 1) + 0.08
+    padf = pad_vox / max(h, 1) + 0.03
     t = max(0.0, ys.min() / h - padf)
     b = min(1.0, (ys.max() + 1) / h + padf)
     left = max(0.0, xs.min() / w - padf)
@@ -331,7 +331,6 @@ def render_object(
     fsize = max(14, cell // 22)
     font = _font(fsize)
     have_mesh = mesh is not None
-    center_row = n_slices // 2
     # Each slice row gets a depth color (matches the mesh's depth coloring):
     # row 0 = nearest the camera (blue) ... last row = farthest (red).
     slice_colors = [_depth_color(i / (n_slices - 1)) for i in range(n_slices)]
@@ -441,8 +440,6 @@ def render_object(
                 border,
             )
             d = ImageDraw.Draw(sec)
-            if i == center_row:
-                d.text((8, 6), "center", fill=(0, 0, 0), font=font)
             if not have_mesh and i == 0:
                 d.text(
                     (8, 6),
@@ -534,9 +531,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--mask-pad",
         type=float,
-        default=250.0,
+        default=0.0,
         help="nm of surrounding EM to keep around the object for object/dim masks "
-        "(a context halo); 0 = tight mask",
+        "(a context halo); 0 (default) = tight mask",
     )
     args = p.parse_args(argv)
 
