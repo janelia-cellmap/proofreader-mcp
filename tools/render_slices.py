@@ -137,21 +137,40 @@ def _bordered(img: Image.Image, color, width: int) -> Image.Image:
     return img
 
 
-def _section_at(raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint):
+def _section_at(
+    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint, mask_mode
+):
     """Section perpendicular to `axis` (z,y,x index) at raw index ri / seg index si.
 
     flipud puts the higher world coordinate at the top so the section's orientation
-    matches the axis-aligned mesh view above it. ``tint`` is the seg overlay color.
+    matches the axis-aligned mesh view above it. ``mask_mode`` controls how the
+    object is shown: 'off' = translucent ``tint`` overlay; 'object' = keep raw only
+    inside the segmentation (white outside); 'dim' = darken everything outside.
     """
     ri = min(max(ri, 0), raw_crop.shape[axis] - 1)
     si = min(max(si, 0), seg_crop.shape[axis] - 1)
     raw2d = np.flipud(np.take(raw_crop, ri, axis=axis))
     seg2d = np.flipud(np.take(seg_crop, si, axis=axis)) == int(obj_id)
-    base = Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
-    mask = Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
-        (cell, cell), Image.NEAREST
+    base = np.asarray(
+        Image.fromarray(_gray_rgb(raw2d, lo, hi)).resize((cell, cell), Image.NEAREST)
     )
-    return Image.fromarray(_overlay(np.asarray(base), np.asarray(mask) > 127, tint))
+    mask = (
+        np.asarray(
+            Image.fromarray((seg2d * 255).astype(np.uint8)).resize(
+                (cell, cell), Image.NEAREST
+            )
+        )
+        > 127
+    )
+    if mask_mode == "object":
+        out = np.full_like(base, 255)
+        out[mask] = base[mask]
+    elif mask_mode == "dim":
+        out = (base.astype(np.float32) * 0.3).astype(np.uint8)
+        out[mask] = base[mask]
+    else:  # "off": translucent overlay
+        out = _overlay(base, mask, tint)
+    return Image.fromarray(out)
 
 
 def _depth_colors(mesh, ax, s, center_xyz, extent_xyz):
@@ -207,6 +226,7 @@ def render_object(
     hi,
     n_slices,
     seg_color_mode,
+    mask_mode,
 ):
     rscale, rtrans = raw_st
     sscale, strans = seg_st
@@ -318,7 +338,17 @@ def render_object(
             tint = slice_colors[i] if seg_color_mode == "depth" else OVERLAY_RGB
             sec = _bordered(
                 _section_at(
-                    raw_crop, seg_crop, axis, ri, si, obj_id, cell, lo, hi, tint
+                    raw_crop,
+                    seg_crop,
+                    axis,
+                    ri,
+                    si,
+                    obj_id,
+                    cell,
+                    lo,
+                    hi,
+                    tint,
+                    mask_mode,
                 ),
                 slice_colors[i],
                 border,
@@ -394,8 +424,15 @@ def main(argv: list[str] | None = None) -> int:
         "--seg-color",
         choices=["fixed", "depth"],
         default="fixed",
-        help="seg overlay tint: 'fixed' light red, or 'depth' to match the row's "
-        "depth color (and the mesh)",
+        help="seg overlay tint (mask off): 'fixed' light red, or 'depth' to match "
+        "the row's depth color (and the mesh)",
+    )
+    p.add_argument(
+        "--mask",
+        choices=["off", "object", "dim"],
+        default="off",
+        help="'off' = translucent seg overlay; 'object' = keep raw EM only inside "
+        "the segmentation (white outside); 'dim' = darken everything outside",
     )
     args = p.parse_args(argv)
 
@@ -455,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
                 hi,
                 args.slices,
                 args.seg_color,
+                args.mask,
             )
             if grid is None:
                 print(f"  skip {oid}: empty crop")

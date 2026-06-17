@@ -188,7 +188,14 @@ Z | [+Z front] [-Z back] [slice1 blue] ... [center] ... [sliceN red]
 The mesh is **colored by distance from the front camera** along the axis (blue nearest → red
 farthest); the **front** view shows the near/blue side and the **back** view (camera flipped
 180°) shows the far/red side, which the front can't. Every slice's border uses the same
-color map, so a blue-bordered slice corresponds to the blue part of the mesh. The crop is a
+color map, so a blue-bordered slice corresponds to the blue part of the mesh.
+
+`--mask` controls how the object is shown in each section: `off` (default) overlays the
+segmentation as a translucent tint over the full EM crop — keeps neighbor context, best for
+spotting **overmerge / oversegment**; `object` keeps the raw EM **only inside the
+segmentation** (white elsewhere) — isolates the object so you can judge **junk /
+misclassified / "does it look like a mito"** without hunting through dense tissue; `dim`
+darkens everything outside the object instead of whiting it out (a middle ground). The crop is a
 **cube** (same nm field of view in every axis), so all panels share **one nm/pixel scale** —
 an object looks smaller down its long axis and larger in the others. Each mesh panel is
 labeled `{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast
