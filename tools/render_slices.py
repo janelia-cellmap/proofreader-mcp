@@ -538,9 +538,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--seg-color",
         choices=["fixed", "depth"],
-        default="fixed",
-        help="seg overlay tint (mask off): 'fixed' light red, or 'depth' to match "
-        "the row's depth color (and the mesh)",
+        default="depth",
+        help="object tint color: 'depth' (default) matches the slice's depth color "
+        "(same as its border and the mesh); 'fixed' uses light red",
     )
     p.add_argument(
         "--mask",
