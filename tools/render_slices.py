@@ -465,10 +465,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--fit",
         choices=["cube", "view"],
-        default="cube",
-        help="'cube' (default): one shared scale per object (x/y/z comparable); "
-        "'view': fit each axis view to its in-plane extent so the object fills the "
-        "panel (more detail, but x/y/z scales differ -- read sizes from the labels)",
+        default="view",
+        help="'view' (default): fit each axis view to its in-plane extent so the "
+        "object fills the panel (more detail, x/y/z scales differ -- read sizes from "
+        "the labels); 'cube': one shared scale per object (x/y/z comparable)",
     )
     p.add_argument(
         "--contrast",
