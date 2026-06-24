@@ -109,6 +109,7 @@ class Store:
 
     def __init__(self) -> None:
         self._collections: dict[str, Collection] = {}
+        self._current_id: str | None = None
 
     # -- registration -----------------------------------------------------
 
@@ -168,6 +169,7 @@ class Store:
             reviews=reviews,
         )
         self._collections[collection_id] = collection
+        self._current_id = collection_id
 
         return LoadReport(
             collection_id=collection_id,
@@ -182,10 +184,26 @@ class Store:
 
     # -- accessors --------------------------------------------------------
 
-    def get(self, collection_id: str) -> Collection:
-        col = self._collections.get(collection_id)
+    def resolve_id(self, collection_id: str | None = None) -> str:
+        """Resolve an explicit collection_id, or fall back to the current one.
+
+        Single-collection workflows routinely omit ``collection_id``; default to
+        the most-recently-loaded collection so callers need not thread the id
+        through every call.
+        """
+        if collection_id:
+            return collection_id
+        if self._current_id is not None:
+            return self._current_id
+        raise CollectionError(
+            "no collection_id given and none loaded yet — call load_collection first"
+        )
+
+    def get(self, collection_id: str | None = None) -> Collection:
+        cid = self.resolve_id(collection_id)
+        col = self._collections.get(cid)
         if col is None:
-            raise CollectionError(f"collection '{collection_id}' not loaded")
+            raise CollectionError(f"collection '{cid}' not loaded")
         return col
 
     def list_collection_ids(self) -> list[str]:

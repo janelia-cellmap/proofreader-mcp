@@ -73,21 +73,38 @@ def load_collection(path: str) -> dict[str, Any]:
     Reads an optional ``objects.json`` sidecar; otherwise scans ``*.png``.
     Reports missing images (declared but absent) and orphan files (PNG on disk
     not declared in the sidecar).
+
+    The response includes the ``rubric`` (what counts as an error) and
+    ``image_legend`` (how to read each montage) inline, so they are delivered up
+    front. READ THEM before classifying — they are also available standalone via
+    ``get_rubric``/``get_image_legend`` but you do not need a second call.
     """
-    return store.load_collection(path).to_dict()
+    report = store.load_collection(path)
+    result = report.to_dict()
+    result["rubric"] = store.rubric(report.collection_id)
+    result["image_legend"] = store.get(report.collection_id).image_legend
+    return result
 
 
 @mcp.tool()
 def list_objects(
-    collection_id: str, page: int = 0, page_size: int = 100
+    collection_id: str | None = None, page: int = 0, page_size: int = 100
 ) -> dict[str, Any]:
-    """Paginated object ids + meta + classification/review status."""
-    return store.list_objects(collection_id, page=page, page_size=page_size)
+    """Paginated object ids + meta + classification/review status.
+
+    ``collection_id`` is optional; when omitted it defaults to the
+    most-recently-loaded collection.
+    """
+    cid = store.resolve_id(collection_id)
+    return store.list_objects(cid, page=page, page_size=page_size)
 
 
 @mcp.tool()
-def get_object_image(collection_id: str, object_id: str) -> Image:
-    """Return the composite image for one object as an image content block."""
+def get_object_image(object_id: str, collection_id: str | None = None) -> Image:
+    """Return the composite image for one object as an image content block.
+
+    ``collection_id`` defaults to the most-recently-loaded collection.
+    """
     col = store.get(collection_id)
     path = col.image_path(object_id)
     if not path.exists():
@@ -96,31 +113,37 @@ def get_object_image(collection_id: str, object_id: str) -> Image:
 
 
 @mcp.tool()
-def get_rubric(collection_id: str) -> dict[str, Any]:
-    """Return the structural guidance + organelle validity rubric to inject."""
-    col = store.get(collection_id)
+def get_rubric(collection_id: str | None = None) -> dict[str, Any]:
+    """Return the structural guidance + organelle validity rubric to inject.
+
+    ``collection_id`` defaults to the most-recently-loaded collection. (The same
+    rubric is also returned inline by ``load_collection``.)
+    """
+    cid = store.resolve_id(collection_id)
+    col = store.get(cid)
     return {
-        "collection_id": collection_id,
+        "collection_id": cid,
         "organelle_type": col.organelle_type,
-        "rubric": store.rubric(collection_id),
+        "rubric": store.rubric(cid),
     }
 
 
 @mcp.tool()
-def get_image_legend(collection_id: str) -> dict[str, Any]:
+def get_image_legend(collection_id: str | None = None) -> dict[str, Any]:
     """Describe how to read each object's composite image (panel layout).
 
     Returns the collection's ``image_legend`` if the upstream renderer recorded one
     (e.g. the mesh + raw-EM slice montage layout); otherwise null. Fetch this before
     classifying so visual judgments are grounded in the actual panel meaning.
+    ``collection_id`` defaults to the most-recently-loaded collection.
     """
-    col = store.get(collection_id)
-    return {"collection_id": collection_id, "image_legend": col.image_legend}
+    cid = store.resolve_id(collection_id)
+    col = store.get(cid)
+    return {"collection_id": cid, "image_legend": col.image_legend}
 
 
 @mcp.tool()
 def classify_object(
-    collection_id: str,
     object_id: str,
     primary_label: str,
     confidence: float,
@@ -128,13 +151,15 @@ def classify_object(
     recommended_action: str = "none",
     flags: list[str] | None = None,
     model_version: str | None = None,
+    collection_id: str | None = None,
 ) -> dict[str, Any]:
     """Record the host LLM's classification of one object.
 
     ``primary_label`` ∈ {acceptable, likely_overmerged, likely_oversegmented,
     junk, misclassified, uncertain}; ``recommended_action`` ∈ {split, merge,
     discard, relabel, none, human_review}. The verdict is persisted with the
-    image hash and model version so re-runs are comparable.
+    image hash and model version so re-runs are comparable. ``collection_id``
+    defaults to the most-recently-loaded collection.
     """
     try:
         label = PrimaryLabel(primary_label)
@@ -152,20 +177,24 @@ def classify_object(
         flags=flag_enums,
         model_version=model_version,
     )
-    stored = store.add_verdict(collection_id, verdict)
+    stored = store.add_verdict(store.resolve_id(collection_id), verdict)
     return stored.to_dict()
 
 
 @mcp.tool()
-def rank_objects(collection_id: str, by: str = "expected_cost") -> dict[str, Any]:
+def rank_objects(
+    collection_id: str | None = None, by: str = "expected_cost"
+) -> dict[str, Any]:
     """Order all recorded verdicts by expected error cost (confidence × severity).
 
-    ``by`` is ``"expected_cost"`` (default) or ``"confidence"``.
+    ``by`` is ``"expected_cost"`` (default) or ``"confidence"``. ``collection_id``
+    defaults to the most-recently-loaded collection.
     """
-    col = store.get(collection_id)
+    cid = store.resolve_id(collection_id)
+    col = store.get(cid)
     ranked = rank(list(col.verdicts.values()), by=by)
     return {
-        "collection_id": collection_id,
+        "collection_id": cid,
         "by": by,
         "count": len(ranked),
         "ranked": [it.to_dict() for it in ranked],
@@ -173,8 +202,11 @@ def rank_objects(collection_id: str, by: str = "expected_cost") -> dict[str, Any
 
 
 @mcp.tool()
-def export_queue(collection_id: str, format: str = "csv") -> str:
-    """Emit the priority-sorted review queue as CSV or JSON text."""
+def export_queue(collection_id: str | None = None, format: str = "csv") -> str:
+    """Emit the priority-sorted review queue as CSV or JSON text.
+
+    ``collection_id`` defaults to the most-recently-loaded collection.
+    """
     col = store.get(collection_id)
     ranked = rank(list(col.verdicts.values()), by="expected_cost")
     return render_queue(ranked, fmt=format)
@@ -182,19 +214,23 @@ def export_queue(collection_id: str, format: str = "csv") -> str:
 
 @mcp.tool()
 def record_review(
-    collection_id: str, object_id: str, verdict: str, notes: str = ""
+    object_id: str,
+    verdict: str,
+    notes: str = "",
+    collection_id: str | None = None,
 ) -> dict[str, Any]:
     """Capture a human verdict on a model classification.
 
     ``verdict`` ∈ {accept, reject, correct}. For ``correct``, put the corrected
-    label and reasoning in ``notes``.
+    label and reasoning in ``notes``. ``collection_id`` defaults to the
+    most-recently-loaded collection.
     """
     try:
         rv = ReviewVerdict(verdict)
     except ValueError as exc:
         raise CollectionError(str(exc)) from exc
     review = Review(object_id=object_id, verdict=rv, notes=notes)
-    stored = store.add_review(collection_id, review)
+    stored = store.add_review(store.resolve_id(collection_id), review)
     return stored.to_dict()
 
 
