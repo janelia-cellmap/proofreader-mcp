@@ -16,8 +16,8 @@ far/red side, which the front can't. Every slice's border uses the same color ma
 so a blue-bordered slice corresponds to the blue part of the mesh, etc.
 The crop is a cube (same nm field of view in every axis), so all panels share ONE
 nm/pixel scale (an object looks smaller down its long axis, larger in the others).
-Sections are raw EM (grayscale, fixed contrast window) with the object's
-segmentation overlaid as a light translucent tint.
+Sections are raw EM (grayscale, one contrast window for every section) with the
+object's segmentation overlaid as a light translucent tint.
 
 Intended to run STAGED: classify meshes first, then render slices only for the
 flagged subset (``--labels likely_overmerged,likely_oversegmented,uncertain``).
@@ -25,11 +25,11 @@ flagged subset (``--labels likely_overmerged,likely_oversegmented,uncertain``).
 Usage::
 
     uv sync --extra slices --extra render --extra precomputed
-    uv run python tools/render_slices.py ignore/snapshots_lod0_100 OUT_DIR \\
-        --raw /nrs/cellmap/data/.../em/fibsem-uint8 \\
-        --seg /nrs/cellmap/.../jrc_P3_E5_D1_N2.zarr/mito \\
-        --mesh-source /nrs/cellmap/.../mito/multires \\
-        --contrast 84,152 \\
+    uv run python tools/render_slices.py /path/to/mesh_collection OUT_DIR \\
+        --raw /path/to/volume.zarr/em \\
+        --seg /path/to/volume.zarr/segmentation \\
+        --mesh-source /path/to/mesh/multires \\
+        --contrast auto \\
         --labels likely_overmerged,likely_oversegmented,uncertain
 """
 
@@ -79,7 +79,8 @@ LAYOUT_LEGEND = (
     "(back/far side, mirrored so it lines up with the sections). The mesh surface is "
     "colored by depth along the axis (blue=near -> red=far) and each section's "
     "colored border matches where it sits in that gradient. In each section the raw "
-    "EM is grayscale (fixed contrast), the object's own voxels are faintly tinted, a "
+    "EM is grayscale (same contrast window in every section), the object's own "
+    "voxels are faintly tinted, a "
     "thin ring of surrounding EM (halo) gives context, and everything beyond is "
     "white. Each mesh panel is labeled with the object's extent along that axis in "
     "nm. Use the mesh for overall shape (overmerge/oversegment) and the EM sections "
@@ -531,9 +532,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--contrast",
-        default="84,152",
-        help="fixed raw-EM intensity window 'lo,hi' (uint8) applied to every slice, "
-        "or 'auto' for a per-object window from the object's own voxels",
+        default="auto",
+        help="'auto' (default) = per-object window from the object's own voxels, "
+        "or a fixed raw-EM intensity window 'lo,hi' (uint8) applied to every slice",
     )
     p.add_argument(
         "--seg-color",

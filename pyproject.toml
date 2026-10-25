@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "coverage", "build", "ruff"]
 # Heavy 3D-rendering deps for the prototype mesh->PNG tool in tools/. Kept out of
-# the core install; intended to migrate to cellmap-analyze once proven.
+# the core install.
 render = ["pyvista", "numpy", "tqdm"]
 # Reading Neuroglancer precomputed meshes (sharded/unsharded, multi-LOD Draco),
 # local or remote (gs://, https). Used by the renderer when --source precomputed.

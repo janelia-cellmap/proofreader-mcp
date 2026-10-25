@@ -24,7 +24,7 @@ object), in a directory, plus an optional sidecar `objects.json`:
 
 ```json
 {
-  "collection_id": "jrc_mus-liver-zon-1_run42",
+  "collection_id": "example_collection",
   "organelle_type": "mitochondrion",
   "objects": [
     {
@@ -65,7 +65,8 @@ If no `objects.json` is present, the collection is built by scanning the directo
 - `load_collection(path)` — register a collection; reports missing images / orphan files
 - `list_objects(collection_id, page, page_size)` — paginated object IDs + meta + verdict status
 - `get_object_image(collection_id, object_id)` — the composite image block
-- `get_rubric(organelle_type)` — the validity rubric to inject into the prompt
+- `get_rubric(collection_id)` — the structural guidance + validity rubric to inject into the prompt
+- `get_image_legend(collection_id)` — how to read each composite image (panel layout), if the renderer recorded one
 - `classify_object(collection_id, object_id, primary_label, confidence, rationale, recommended_action, flags, model_version)`
 - `rank_objects(collection_id, by)` — order verdicts by expected cost
 - `export_queue(collection_id, format)` — emit a priority-sorted queue (`csv` or `json`)
@@ -138,8 +139,8 @@ The MCP keeps one live verdict per object. To preserve a run (so different model
 re-runs over time, don't overwrite each other), snapshot it:
 
 ```bash
-uv run python tools/export_run.py ignore/slices_all
-# -> ignore/runs/<model>/<YYYY-MM-DD_HHMMSS>/{verdicts.json, queue.csv, review.html}
+uv run python tools/export_run.py /path/to/collection
+# -> runs/<model>/<YYYY-MM-DD_HHMMSS>/{verdicts.json, queue.csv, review.html}
 ```
 
 The run directory is named by the evaluating model (from `model_version`) and a timestamp;
@@ -188,10 +189,9 @@ cluster needs OSMesa/EGL or a virtual framebuffer (`xvfb-run`).
 The mesh-loading backends live in [tools/mesh_sources.py](tools/mesh_sources.py)
 (`FileMeshSource`, `PrecomputedMeshSource`), so new formats are easy to add.
 
-This renderer is a **prototype destined for
-[cellmap-analyze](https://github.com/janelia-cellmap/cellmap-analyze)**, where dask can
-scale it and segmentation access can fill in `voxel_count` / `at_volume_edge` / `centroid`.
-It is intentionally not part of the core MCP install.
+This renderer is a **prototype**; a production pipeline with segmentation access could
+also fill in `voxel_count` / `at_volume_edge` / `centroid`. It is intentionally not part
+of the core MCP install.
 
 ## Verifying against raw data (2D slices)
 
@@ -215,7 +215,8 @@ color map, so a blue-bordered slice corresponds to the blue part of the mesh.
 
 `--mask` controls how the object is shown in each section: `object` (default) keeps the raw
 EM **only inside the segmentation** (white elsewhere) — isolates the object so you can judge
-**junk / misclassified / "does it look like a mito"** without hunting through dense tissue;
+**junk / misclassified / "does it look like the declared organelle type"** without hunting
+through dense tissue;
 `off` overlays the segmentation as a translucent tint over the full EM crop — keeps neighbor
 context, best for spotting **overmerge / oversegment**; `dim` darkens everything outside the
 object instead of whiting it out (a middle ground). `--mask-pad` (default 250 nm) keeps a
@@ -224,8 +225,9 @@ boundary/neighbors while the object stays isolated; `--mask-pad 0` for a tight m
 back (right) mesh view is mirrored so its left-right matches the slices and front view. The crop is a
 **cube** (same nm field of view in every axis), so all panels share **one nm/pixel scale** —
 an object looks smaller down its long axis and larger in the others. Each mesh panel is
-labeled `{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with a **fixed contrast
-window** (`--contrast lo,hi`, default `84,152` for this dataset) and the object's
+labeled `{x,y,z}_extent = N nm`. Sections are raw EM in grayscale with **one contrast
+window for every section** (`--contrast auto`, the default, derives it from the object's
+own voxels; `--contrast lo,hi` fixes it for the whole run) and the object's
 segmentation overlaid as a **light** translucent tint — `--seg-color fixed` (light red) or
 `depth` (match the row's depth color). The mesh column is shown only when `--mesh-source` is
 given.
@@ -235,10 +237,10 @@ slices only for the flagged subset:
 
 ```bash
 uv sync --extra slices --extra render --extra precomputed
-uv run python tools/render_slices.py ignore/snapshots_lod0_100 ignore/slices \
-    --raw /nrs/cellmap/data/.../em/fibsem-uint8 \
-    --seg /nrs/cellmap/.../jrc_P3_E5_D1_N2.zarr/mito \
-    --mesh-source /nrs/cellmap/.../mito/multires \
+uv run python tools/render_slices.py /path/to/mesh_collection /path/to/slices \
+    --raw /path/to/volume.zarr/em \
+    --seg /path/to/volume.zarr/segmentation \
+    --mesh-source /path/to/mesh/multires \
     --labels likely_overmerged,likely_oversegmented,uncertain
 ```
 

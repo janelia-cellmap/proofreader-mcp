@@ -14,7 +14,7 @@ by side for comparison instead of overwriting each other.
 
 Usage::
 
-    uv run python tools/export_run.py ignore/slices_all
+    uv run python tools/export_run.py /path/to/collection
 """
 
 from __future__ import annotations
@@ -33,9 +33,7 @@ from proofreader_mcp.storage import Store
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("collection_dir", type=Path, help="collection with verdicts")
-    p.add_argument(
-        "--runs-root", type=Path, default=Path("ignore/runs"), help="archive root"
-    )
+    p.add_argument("--runs-root", type=Path, default=Path("runs"), help="archive root")
     p.add_argument(
         "--model", default=None, help="label for this run (default: from verdicts)"
     )

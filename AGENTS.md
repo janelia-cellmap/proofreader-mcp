@@ -1,9 +1,12 @@
 # AGENTS.md — driving the proofreader pipeline
 
 This repo ships a **`proofreader`** MCP server (registered for Claude Code, VSCode,
-Gemini CLI, and Codex; see the README). Use it to classify segmented objects
-(mitochondria here) from rendered montages and produce a ranked review queue. The
-server stores no model and does no inference — **you** do the visual judgment.
+Gemini CLI, and Codex; see the README). Use it to classify segmented objects from
+rendered montages and produce a ranked review queue. The server stores no model and
+does no inference — **you** do the visual judgment.
+
+Below, `<collection_dir>` is the directory of rendered montages you were asked to
+evaluate (one `<object_id>.png` per object plus an `objects.json` sidecar).
 
 ## Rules — read before you start (non-negotiable)
 
@@ -16,8 +19,8 @@ So:
    open images in batches / in parallel "to be efficient" — one image, one verdict, in
    sequence. No skipping, no extrapolating one verdict to "similar-looking" objects.
 2. **Form each verdict only from the image you just viewed.** Do **not** read, load, or
-   `import` any prior state — never open `ignore/slices_all/proofreader_state.json`,
-   `*_backup*.json`, `ignore/runs/**`, or any existing verdicts/rationales. If you happen
+   `import` any prior state — never open `<collection_dir>/proofreader_state.json`,
+   `*_backup*.json`, `runs/**`, or any existing verdicts/rationales. If you happen
    to see prior labels (e.g. in `list_objects` output), ignore them and judge independently.
 3. **Record every verdict by calling the `classify_object` MCP tool DIRECTLY — one tool
    call per object.** The verdict must be a real MCP tool invocation made by you, not
@@ -46,15 +49,15 @@ a time is expected and correct.
 
 ## Task prompt (paste to an agent)
 
-> Use the **proofreader** MCP server to evaluate the mitochondria in `ignore/slices_all`.
+> Use the **proofreader** MCP server to evaluate the objects in `<collection_dir>`.
 >
-> 1. `load_collection` with path `ignore/slices_all`.
+> 1. `load_collection` with path `<collection_dir>`.
 > 2. `get_image_legend` and `get_rubric` — follow them. The legend explains how to read
 >    each object's montage; the rubric defines what counts as an error.
 > 3. `list_objects` to get the object ids (ignore any prior labels shown there).
 > 4. Go through **every** object **one at a time, in sequence** (do NOT read images in
 >    batches/parallel). For each: first view its image —
->    `get_object_image(collection_id, object_id)` or open `ignore/slices_all/<object_id>.png`
+>    `get_object_image(collection_id, object_id)` or open `<collection_dir>/<object_id>.png`
 >    directly — **then** call the `classify_object` MCP tool **directly** with:
 >    `primary_label` (acceptable | likely_overmerged | likely_oversegmented | junk |
 >    misclassified | uncertain), `confidence` 0–1, one-sentence `rationale` citing the
@@ -66,7 +69,7 @@ a time is expected and correct.
 >    server source/README/config, build contact sheets, or combine objects into one
 >    image — see the Rules above.
 > 5. `rank_objects`, show the top of the queue, then `export_queue` (format json).
-> 6. Archive the run (shell): `uv run python tools/export_run.py ignore/slices_all`
+> 6. Archive the run (shell): `uv run python tools/export_run.py <collection_dir>`
 > 7. Report how many objects you actually viewed and classified this run.
 
 ## How to read each montage
@@ -89,17 +92,17 @@ the meshes (overmerge/oversegment) and **identity/validity** from the EM section
 - **Set `model_version` to your actual model** (e.g. `gemini-2.5-pro`, `gpt-5.5`,
   `claude-opus-4-8`). This labels the review-page rows and the archive directory.
 - **If your client can't display MCP image results, read the PNGs off disk** — they are
-  plain files at `ignore/slices_all/<id>.png`.
+  plain files at `<collection_dir>/<id>.png`.
 - **The live state keeps one verdict per object** (latest wins). So run
   `export_run` *immediately after your pass*, before any other model classifies; each
-  run is saved to `ignore/runs/<model>/<YYYY-MM-DD_HHMMSS>/` (verdicts.json + queue.csv +
+  run is saved to `runs/<model>/<YYYY-MM-DD_HHMMSS>/` (verdicts.json + queue.csv +
   review.html). If the live state mixes models, the archive falls back to `mixed/`
   (or pass `--model NAME` to force the label).
 - **Do not run two agents against the same collection at once.** Each client runs its
   own MCP process; both rewrite the whole `proofreader_state.json` (last-writer-wins, no
   locking), so concurrent runs clobber each other's verdicts. Run sequentially, or give
-  each agent its own copy of the collection dir (`cp -r ignore/slices_all
-  ignore/slices_all_<agent>`) so they have separate state.
+  each agent its own copy of the collection dir (`cp -r <collection_dir>
+  <collection_dir>_<agent>`) so they have separate state.
 
 ## Tools
 

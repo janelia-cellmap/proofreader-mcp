@@ -55,10 +55,11 @@ Structural faults (apply to every object, no rubric required):
   the EM says they should be separate objects. That membrane may or may not be
   captured in the few slices you have; if you cannot see a clear dividing
   membrane, do not assert a merge. Also covered: implausible topology, multiple
-  cell bodies in one label. NOTE: a thin branch connecting two lobes is NOT a
-  merge — thin branches are normal mito topology. And separate 2D profiles within
-  a slice are NOT a merge (see slicing-geometry note above) — judge connectivity
-  from the mesh, not from a single section.
+  cell bodies in one label. NOTE: a thin branch connecting two lobes is NOT by
+  itself a merge — thin branches are normal topology for many organelles (see
+  the organelle rubric, if any). And separate 2D profiles within a slice are NOT
+  a merge (see slicing-geometry note above) — judge connectivity from the mesh,
+  not from a single section.
   CRITICAL BAR FOR CALLING A MERGE: a membrane between two lobes IN A GIVEN PLANE
   does NOT prove they are separate — they can be a single object connected
   somewhere else (e.g. a U whose two arms touch with a membrane between them in
@@ -69,12 +70,12 @@ Structural faults (apply to every object, no rubric required):
   you usually CANNOT establish that; when a connection elsewhere is plausible,
   use uncertain (human_review), not likely_overmerged.
 - likely_oversegmented (false split): the object does not look like a complete,
-  correct mito shape — e.g. a harsh planar truncation face mid-structure where it
-  is cut flat instead of ending naturally, or a jagged/torn boundary that breaks
-  the expected smooth tubular form. TRAP: the same flat cut occurs when an object
-  is legitimately clipped by the dataset / field-of-view boundary. A cut AWAY
-  FROM any volume edge is suspicious; a cut AT the edge is expected. Use
-  meta.at_volume_edge when present to disambiguate.
+  correct instance of its type — e.g. a harsh planar truncation face
+  mid-structure where it is cut flat instead of ending naturally, or a
+  jagged/torn boundary that breaks the expected smooth form. TRAP: the same
+  flat cut occurs when an object is legitimately clipped by the dataset /
+  field-of-view boundary. A cut AWAY FROM any volume edge is suspicious; a cut
+  AT the edge is expected. Use meta.at_volume_edge when present to disambiguate.
 
 When the evidence is genuinely inconclusive — e.g. a very thin or unlikely
 branch where the visible sections do not show whether a dividing membrane is
