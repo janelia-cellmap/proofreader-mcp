@@ -29,6 +29,10 @@ precomputed = ["cloud-volume"]
 # Reading OME-Zarr raw EM + segmentation volumes to render 2D cross-section
 # montages (tools/render_slices.py).
 slices = ["zarr", "numpy", "Pillow"]
+# Rendering rotating 3D turntable MP4s of a single object's mesh, with a static
+# labeled grid overlay, for macro visual proofreading (tools/render_turntable.py).
+# Builds on [render] (pyvista) and adds MP4 encoding via imageio + ffmpeg.
+video = ["pyvista", "numpy", "imageio", "imageio-ffmpeg"]
 
 [project.scripts]
 proofreader-mcp = "proofreader_mcp.server:main"
