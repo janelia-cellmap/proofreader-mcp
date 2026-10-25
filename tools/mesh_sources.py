@@ -17,10 +17,27 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 MESH_INFO_TYPES = {"neuroglancer_multilod_draco", "neuroglancer_legacy_mesh"}
+
+
+def _strip_scheme(url: str) -> str:
+    """Drop a leading ``precomputed://`` and any trailing slash."""
+    if url.startswith("precomputed://"):
+        url = url[len("precomputed://") :]
+    return url.rstrip("/")
+
+
+def _read_remote_json(url: str, suffix: str) -> dict | None:
+    """GET ``<url>/<suffix>`` and parse JSON, or None on any failure."""
+    try:
+        with urllib.request.urlopen(f"{_strip_scheme(url)}/{suffix}", timeout=15) as r:
+            return json.loads(r.read().decode())
+    except Exception:  # noqa: BLE001 - missing/unreachable info is a normal "no"
+        return None
 
 
 class MeshSource(ABC):
@@ -98,56 +115,88 @@ class PrecomputedMeshSource(MeshSource):
     def __init__(self, source: str, lod: int = 0) -> None:
         self.lod = lod
         self._tmp: str | None = None
-        cloudpath, self._segprop_ids = self._resolve(source)
+        cloudpath, self._segprop_ids, info = self._resolve(source)
 
         from cloudvolume import CloudVolume
 
-        self.cv = CloudVolume(cloudpath, progress=False)
+        # ``info`` is set when we synthesize a parent segmentation for a
+        # standalone mesh layer; passing it inline stops CloudVolume from trying
+        # to fetch a (nonexistent) segmentation ``info`` for that layer.
+        self.cv = CloudVolume(cloudpath, progress=False, info=info)
 
-    def _resolve(self, source: str) -> tuple[str, list[str] | None]:
-        """Return a CloudVolume cloudpath and any inline segment ids."""
+    def _resolve(self, source: str) -> tuple[str, list[str] | None, dict | None]:
+        """Return a CloudVolume cloudpath, inline segment ids, and inline info.
+
+        ``info`` is non-None only when ``source`` is a *standalone mesh layer*
+        (its own ``info`` is a ``neuroglancer_*`` mesh, not a segmentation), in
+        which case we synthesize a minimal parent segmentation so CloudVolume can
+        attach the mesh. This handles both local dirs (via a temp symlink) and
+        remote URLs (via the parent URL + an inline info).
+        """
         if "://" in source:
+            info = _read_remote_json(source, "info")
+            if info is not None and info.get("@type") in MESH_INFO_TYPES:
+                # Standalone *remote* mesh layer: treat its parent dir as the
+                # segmentation and name this dir as the mesh subdir.
+                base = _strip_scheme(source)
+                parent, mesh_dir = base.rsplit("/", 1)
+                ids = self._remote_segment_ids(source)
+                return f"precomputed://{parent}/", ids, self._mesh_seg_info(mesh_dir)
             cp = (
                 source
                 if source.startswith("precomputed://")
                 else f"precomputed://{source}"
             )
-            return cp, None
+            return cp, None, None
 
         base = Path(source).resolve()
         info = _read_info(base)
         if info is None:
             raise ValueError(f"no precomputed 'info' found at {base}")
 
-        # A standalone mesh layer: synthesize a parent segmentation layer.
+        # A standalone mesh layer: synthesize a parent segmentation layer in a
+        # temp dir whose ``mesh`` subdir symlinks the real local mesh dir.
         if info.get("@type") in MESH_INFO_TYPES:
             ids = self._segment_property_ids(base)
             self._tmp = tempfile.mkdtemp(prefix="proofreader_pc_")
-            seg_info = {
-                "@type": "neuroglancer_multiscale_volume",
-                "type": "segmentation",
-                "data_type": "uint64",
-                "num_channels": 1,
-                "scales": [
-                    {
-                        "key": "s0",
-                        "size": [1, 1, 1],
-                        "resolution": [1, 1, 1],
-                        "chunk_sizes": [[64, 64, 64]],
-                        "encoding": "raw",
-                        "voxel_offset": [0, 0, 0],
-                    }
-                ],
-                "mesh": "mesh",
-            }
-            (Path(self._tmp) / "info").write_text(json.dumps(seg_info))
+            info_path = Path(self._tmp) / "info"
+            info_path.write_text(json.dumps(self._mesh_seg_info("mesh")))
             os.symlink(base, Path(self._tmp) / "mesh")
-            return f"precomputed://file://{self._tmp}", ids
+            return f"precomputed://file://{self._tmp}", ids, None
 
         # A full segmentation layer: use as-is; try its mesh segment_properties.
         mesh_key = info.get("mesh", "mesh")
         ids = self._segment_property_ids(base / mesh_key)
-        return f"precomputed://file://{base}", ids
+        return f"precomputed://file://{base}", ids, None
+
+    @staticmethod
+    def _mesh_seg_info(mesh_dir: str) -> dict:
+        """Minimal parent-segmentation info pointing ``mesh`` at ``mesh_dir``."""
+        return {
+            "@type": "neuroglancer_multiscale_volume",
+            "type": "segmentation",
+            "data_type": "uint64",
+            "num_channels": 1,
+            "scales": [
+                {
+                    "key": "s0",
+                    "size": [1, 1, 1],
+                    "resolution": [1, 1, 1],
+                    "chunk_sizes": [[64, 64, 64]],
+                    "encoding": "raw",
+                    "voxel_offset": [0, 0, 0],
+                }
+            ],
+            "mesh": mesh_dir,
+        }
+
+    @staticmethod
+    def _remote_segment_ids(url: str) -> list[str] | None:
+        data = _read_remote_json(url, "segment_properties/info")
+        try:
+            return list(data["inline"]["ids"]) if data else None
+        except (KeyError, TypeError):
+            return None
 
     @staticmethod
     def _segment_property_ids(mesh_dir: Path) -> list[str] | None:

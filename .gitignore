@@ -5,6 +5,8 @@ scripts/
 
 # Proofreader runtime state written alongside collections
 proofreader_state.json
+# Archived evaluation runs (tools/export_run.py)
+runs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

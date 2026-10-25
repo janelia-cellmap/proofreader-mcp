@@ -15,9 +15,9 @@ Two input sources (auto-detected, or forced with ``--source``):
   detail with ``--lod`` (0 = finest; higher = coarser/faster).
 
 This is a PROTOTYPE living outside the installed package (see the ``[render]`` and
-``[precomputed]`` optional extras). It is intended to migrate into cellmap-analyze,
-where dask can scale it and segmentation access can enrich the sidecar
-(voxel_count, at_volume_edge, centroid). Run it with::
+``[precomputed]`` optional extras). A production pipeline with segmentation access
+could also enrich the sidecar (voxel_count, at_volume_edge, centroid). Run it
+with::
 
     uv sync --extra render --extra precomputed
 

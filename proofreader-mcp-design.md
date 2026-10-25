@@ -46,7 +46,7 @@ thousands of independent, parallelizable calls.
 One composite PNG per object, plus an optional sidecar `objects.json`:
 ```json
 {
-  "collection_id": "jrc_mus-liver-zon-1_run42",
+  "collection_id": "example_collection",
   "organelle_type": "mitochondrion",
   "objects": [
     {

@@ -9,14 +9,17 @@ Reads a collection directory (its ``objects.json`` and the verdicts persisted in
   flags, recommended_action, rationale, model) plus the bounding-box extents,
 * sortable columns (click a header), filters by label / action / model, search,
 * per-object Neuroglancer links and an "open all (by category)" link that loads
-  one colored mesh layer per label (good=green, overmerged=red, ...).
+  one colored mesh layer per label (good=green, overmerged=red, ...), when
+  ``--ng-mesh-sources`` is given.
 
 The page embeds its data inline, so it works opened directly from disk
 (``file://``) as long as it sits next to the ``{object_id}.png`` images.
 
 Usage::
 
-    uv run python tools/make_review_page.py ignore/snapshots_lod0_100
+    uv run python tools/make_review_page.py /path/to/collection \\
+        --ng-mesh-sources "precomputed://https://example.org/seg" \\
+        --ng-em-source "zarr://https://example.org/em.zarr/s0"
 """
 
 from __future__ import annotations
@@ -28,23 +31,6 @@ from pathlib import Path
 
 from proofreader_mcp.ranking import rank
 from proofreader_mcp.storage import Store
-
-# Defaults wired to the c-elegans jrc_P3 layer (override on the CLI).
-DEFAULT_MESH_SOURCES = ",".join(
-    [
-        "https://cellmap-vm1.int.janelia.org/nrs/ackermand/new_meshes/mesh-n-bone/"
-        "c-elegans-assign-to-cells-20260603/jrc_P3_E5_D1_N2/mito/"
-        "_intermediate_scales.zarr/|zarr2:",
-        "https://cellmap-vm1.int.janelia.org/nrs/ackermand/new_meshes/mesh-n-bone/"
-        "c-elegans-assign-to-cells-20260603/jrc_P3_E5_D1_N2/mito/multires/"
-        "|neuroglancer-precomputed:",
-    ]
-)
-DEFAULT_EM_SOURCE = (
-    "https://cellmap-vm1.int.janelia.org/nrs/data/jrc_P3-E5-D1-N2/"
-    "jrc_P3-E5-D1-N2.zarr/recon-1/em/fibsem-uint8/|zarr2:"
-)
-DEFAULT_POSITION = "2108.380126953125,1864.4127197265625,12689.4853515625"
 
 # Per-label mesh colors for the Neuroglancer category layers.
 LABEL_COLORS = {
@@ -133,6 +119,7 @@ PAGE_TEMPLATE = """<!doctype html>
 <script>
 __DATA__
 let sortKey = "expected_cost", sortDir = -1;
+const HAS_NG = NG_MESH_SOURCES.length > 0 || !!NG_EM_SOURCE;
 
 function dims() { const r = NG_RES_NM * 1e-9; return {z:[r,"m"], y:[r,"m"], x:[r,"m"]}; }
 function avg(a) { return a.reduce((s,x)=>s+x,0) / a.length; }
@@ -142,10 +129,10 @@ function avg(a) { return a.reduce((s,x)=>s+x,0) / a.length; }
 function ngState(rows) {
   const layers = [];
   if (NG_EM_SOURCE) layers.push({type:"image", source:NG_EM_SOURCE, name:"em",
-    tab:"source", shaderControls:{normalized:{range:[65,154], window:[43,176]}}});
+    tab:"source"});
   const byLabel = {};
   for (const d of rows) (byLabel[d.primary_label] = byLabel[d.primary_label] || []).push(d);
-  for (const lbl of Object.keys(byLabel)) {
+  for (const lbl of NG_MESH_SOURCES.length ? Object.keys(byLabel) : []) {
     const ids = byLabel[lbl].map(d => String(d.object_id));
     const colors = {}; ids.forEach(i => colors[i] = LABEL_COLORS[lbl] || "#ffff00");
     layers.push({type:"segmentation", source:NG_MESH_SOURCES, segments:ids,
@@ -155,8 +142,8 @@ function ngState(rows) {
   const c = rows.filter(d => d.cx != null);
   if (c.length) pos = [avg(c.map(d=>d.cz))/NG_RES_NM, avg(c.map(d=>d.cy))/NG_RES_NM,
                        avg(c.map(d=>d.cx))/NG_RES_NM];
-  const state = {dimensions:dims(), position:pos, layers:layers, layout:"4panel",
-                 showSlices:false};
+  const state = {dimensions:dims(), layers:layers, layout:"4panel", showSlices:false};
+  if (pos) state.position = pos;
   return NG_BASE + "#!" + encodeURIComponent(JSON.stringify(state));
 }
 function lblPill(l){ return '<span class="pill lbl-'+l+'">'+l+'</span>'; }
@@ -197,7 +184,7 @@ function render() {
   const rows = visibleRows();
   document.getElementById("count").textContent = rows.length+" shown";
   document.getElementById("rows").innerHTML = rows.map(d => {
-    const ng = ngState([d]);
+    const ng = HAS_NG ? '<a href="'+ngState([d])+'" target="_blank">open</a>' : '';
     return '<tr>'+
       '<td><a href="'+d.image+'" target="_blank"><img class="thumb" loading="lazy" src="'+d.image+'"></a></td>'+
       '<td>'+d.object_id+'</td>'+
@@ -211,7 +198,7 @@ function render() {
       '<td class="num">'+(d.ext_y??"")+'</td>'+
       '<td class="num">'+(d.ext_z??"")+'</td>'+
       '<td class="rationale">'+d.rationale+'</td>'+
-      '<td><a href="'+ng+'" target="_blank">open</a></td>'+
+      '<td>'+ng+'</td>'+
     '</tr>';
   }).join('');
   document.querySelectorAll("th").forEach(th=>{
@@ -232,6 +219,7 @@ document.querySelectorAll("th").forEach(th=>{
   id=>document.getElementById(id).addEventListener("input", render));
 document.getElementById("ngAll").addEventListener("click",
   ()=>window.open(ngState(visibleRows()), "_blank"));
+if (!HAS_NG) document.getElementById("ngAll").style.display = "none";
 summarize(); render();
 </script>
 </body>
@@ -282,17 +270,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--ng-mesh-sources",
-        default=DEFAULT_MESH_SOURCES,
-        help="comma-separated Neuroglancer source(s) for the mesh/segmentation layers",
+        default="",
+        help="comma-separated Neuroglancer source(s) for the mesh/segmentation "
+        "layers; Neuroglancer links are omitted when neither this nor "
+        "--ng-em-source is given",
     )
     parser.add_argument(
-        "--ng-em-source", default=DEFAULT_EM_SOURCE, help="Neuroglancer raw-EM source"
+        "--ng-em-source", default="", help="Neuroglancer raw-EM source (optional)"
     )
     parser.add_argument(
-        "--ng-res-nm", type=float, default=16.0, help="nm per unit of NG position"
+        "--ng-res-nm", type=float, default=1.0, help="nm per unit of NG position"
     )
     parser.add_argument(
-        "--ng-position", default=DEFAULT_POSITION, help="fallback NG position z,y,x"
+        "--ng-position",
+        default=None,
+        help="fallback NG position z,y,x (used when objects carry no centroid)",
     )
     args = parser.parse_args(argv)
 
@@ -315,7 +307,9 @@ def main(argv: list[str] | None = None) -> int:
             d["image"] = f"{rel}/{d['object_id']}.png"
 
     mesh_sources = [s for s in args.ng_mesh_sources.split(",") if s]
-    position = [float(x) for x in args.ng_position.split(",")]
+    position = (
+        [float(x) for x in args.ng_position.split(",")] if args.ng_position else None
+    )
     data_js = (
         "const DATA = " + json.dumps(records) + ";\n"
         "const NG_BASE = " + json.dumps(args.neuroglancer_base) + ";\n"
