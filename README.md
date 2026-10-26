@@ -11,6 +11,10 @@ Errors include segmentation faults (**overmerge**, **oversegment**) *and* object
 faults (**junk/debris**, **misclassified** — e.g. an object labeled mitochondrion that
 isn't a plausible one).
 
+![proofreader-mcp review page ranking objects by likely error](docs/images/review-page.jpg)
+
+*Review page from a run on 32 mitochondria of the public HeLa cell jrc_hela-2, ranked by how likely each is to be wrong.*
+
 ## Division of labor
 
 The server stores **no model** and makes **no inference calls**. It is a resource + state
