@@ -11,9 +11,9 @@ Errors include segmentation faults (**overmerge**, **oversegment**) *and* object
 faults (**junk/debris**, **misclassified** — e.g. an object labeled mitochondrion that
 isn't a plausible one).
 
-![proofreader-mcp review page ranking objects by likely error](docs/images/review-page.jpg)
+![Mesh views and EM sections of one mitochondrion label, with the model's verdict that it is likely overmerged](docs/images/object-61-review.jpg)
 
-*Review page from a run on 32 mitochondria of the public HeLa cell jrc_hela-2, ranked by how likely each is to be wrong.*
+*Mitochondrion label 61 in the public HeLa cell jrc_hela-2: the mesh views and EM sections the server renders for the model, and the model's verdict. The verdict comes from an earlier run that reviewed the mesh views only; the EM sections show the separate mitochondria inside the one label.*
 
 ## Division of labor
 
